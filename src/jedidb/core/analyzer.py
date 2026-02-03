@@ -88,7 +88,7 @@ class Analyzer:
                 try:
                     sigs = name.get_signatures()
                     if sigs:
-                        signature = str(sigs[0])
+                        signature = sigs[0].to_string()
                 except Exception:
                     pass
 

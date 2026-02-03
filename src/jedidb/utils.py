@@ -1,6 +1,7 @@
 """Utility functions for JediDB."""
 
 import hashlib
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -77,6 +78,49 @@ def is_python_file(path: Path) -> bool:
     return path.is_file() and path.suffix == ".py"
 
 
+def glob_match(path_str: str, pattern: str) -> bool:
+    """Match a path against a glob pattern with proper ** support.
+
+    Unlike Path.match(), this correctly handles ** to match zero or more
+    directory levels.
+
+    Args:
+        path_str: Path string to match
+        pattern: Glob pattern (supports *, **, and ?)
+
+    Returns:
+        True if the path matches the pattern
+    """
+    # Convert glob pattern to regex
+    # ** matches any number of directories (including zero)
+    # * matches anything except /
+    regex_parts = []
+    i = 0
+    while i < len(pattern):
+        if pattern[i : i + 2] == "**":
+            regex_parts.append(".*")  # Match anything including /
+            i += 2
+            # Skip following / if present (** absorbs it)
+            if i < len(pattern) and pattern[i] == "/":
+                regex_parts.append("/?")
+                i += 1
+        elif pattern[i] == "*":
+            regex_parts.append("[^/]*")  # Match anything except /
+            i += 1
+        elif pattern[i] == "?":
+            regex_parts.append("[^/]")  # Match single char except /
+            i += 1
+        elif pattern[i] in r".^$+{}[]|()\\":
+            regex_parts.append("\\" + pattern[i])
+            i += 1
+        else:
+            regex_parts.append(pattern[i])
+            i += 1
+
+    regex_pattern = "^" + "".join(regex_parts) + "$"
+    return bool(re.match(regex_pattern, path_str))
+
+
 def match_glob_patterns(
     path: Path,
     include: list[str] | None = None,
@@ -107,13 +151,13 @@ def match_glob_patterns(
     # Check exclude patterns first
     if exclude:
         for pattern in exclude:
-            if rel_path.match(pattern) or Path(rel_str).match(pattern):
+            if glob_match(rel_str, pattern):
                 return False
 
     # Check include patterns
     if include:
         for pattern in include:
-            if rel_path.match(pattern) or Path(rel_str).match(pattern):
+            if glob_match(rel_str, pattern):
                 return True
         return False
 
