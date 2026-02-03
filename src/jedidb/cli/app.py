@@ -1,5 +1,8 @@
 """Main Typer application for JediDB CLI."""
 
+from pathlib import Path
+from typing import Optional
+
 import typer
 
 from jedidb.cli.commands import init, index, search, query, show, export, stats, clean
@@ -11,6 +14,25 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+
+
+@app.callback()
+def main_callback(
+    ctx: typer.Context,
+    project: Optional[Path] = typer.Option(
+        None,
+        "--project",
+        "-C",
+        help="Project directory (like git -C)",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True,
+    ),
+):
+    """Jedi code analyzer with DuckDB storage and full-text search."""
+    ctx.ensure_object(dict)
+    ctx.obj["project"] = project
 
 
 app.command(name="init", help="Initialize jedidb in a project")(init.init_cmd)

@@ -1,8 +1,10 @@
 """Output formatters for CLI."""
 
 import json
+from pathlib import Path
 from typing import Any
 
+import typer
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -13,6 +15,13 @@ from jedidb.core.models import Definition, Reference, SearchResult
 
 
 console = Console()
+
+
+def get_project_path(ctx: typer.Context) -> Path | None:
+    """Get project path from CLI context (set by -C/--project flag)."""
+    if ctx.obj and "project" in ctx.obj:
+        return ctx.obj["project"]
+    return None
 
 
 def format_definition_table(definitions: list[Definition], show_file: bool = True) -> Table:

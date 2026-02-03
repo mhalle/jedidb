@@ -11,6 +11,7 @@ from jedidb.cli.formatters import console, print_success, print_error, print_war
 
 
 def clean_cmd(
+    ctx: typer.Context,
     all: bool = typer.Option(
         False,
         "--all",
@@ -40,8 +41,12 @@ def clean_cmd(
     By default, removes entries for files that no longer exist.
     Use --all to completely reset the database.
     """
-    # Find project root
-    project_root = Config.find_project_root()
+    from jedidb.cli.formatters import get_project_path
+
+    # Find project root (CLI -C flag takes precedence)
+    project_root = get_project_path(ctx)
+    if project_root is None:
+        project_root = Config.find_project_root()
     if project_root is None:
         project_root = Path.cwd()
 

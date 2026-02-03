@@ -12,6 +12,7 @@ from jedidb.cli.formatters import console, print_success, print_error, print_inf
 
 
 def index_cmd(
+    ctx: typer.Context,
     paths: Optional[list[str]] = typer.Argument(
         None,
         help="Paths to index (default: project root)",
@@ -51,8 +52,12 @@ def index_cmd(
 
     Only changed files are re-indexed unless --force is used.
     """
-    # Find project root
-    project_root = Config.find_project_root()
+    from jedidb.cli.formatters import get_project_path
+
+    # Find project root (CLI -C flag takes precedence)
+    project_root = get_project_path(ctx)
+    if project_root is None:
+        project_root = Config.find_project_root()
     if project_root is None:
         project_root = Path.cwd()
 

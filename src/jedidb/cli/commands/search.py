@@ -17,6 +17,7 @@ from jedidb.cli.formatters import (
 
 
 def search_cmd(
+    ctx: typer.Context,
     query: str = typer.Argument(
         ...,
         help="Search query",
@@ -56,8 +57,12 @@ def search_cmd(
 
     Search across function names, class names, and docstrings.
     """
-    # Find project root
-    project_root = Config.find_project_root()
+    from jedidb.cli.formatters import get_project_path
+
+    # Find project root (CLI -C flag takes precedence)
+    project_root = get_project_path(ctx)
+    if project_root is None:
+        project_root = Config.find_project_root()
     if project_root is None:
         project_root = Path.cwd()
 
