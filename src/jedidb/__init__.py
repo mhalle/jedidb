@@ -1,0 +1,143 @@
+"""JediDB - Jedi code analyzer with DuckDB storage and full-text search."""
+
+__version__ = "0.1.0"
+
+from jedidb.core.database import Database
+from jedidb.core.indexer import Indexer
+from jedidb.core.search import SearchEngine
+from jedidb.core.analyzer import Analyzer
+from jedidb.core.models import (
+    FileRecord,
+    Definition,
+    Reference,
+    Import,
+    SearchResult,
+)
+from jedidb.config import Config
+
+
+class JediDB:
+    """Main interface for the JediDB code analyzer."""
+
+    def __init__(self, path: str = ".", db_path: str | None = None):
+        """Initialize JediDB for a project.
+
+        Args:
+            path: Project root directory
+            db_path: Optional custom database path. If None, uses .jedidb/jedidb.duckdb
+        """
+        self.config = Config(project_path=path, db_path=db_path)
+        self.db = Database(self.config.db_path)
+        self.analyzer = Analyzer(self.config.project_path)
+        self.indexer = Indexer(self.db, self.analyzer)
+        self.search_engine = SearchEngine(self.db)
+
+    def index(
+        self,
+        paths: list[str] | None = None,
+        include: list[str] | None = None,
+        exclude: list[str] | None = None,
+        force: bool = False,
+    ) -> dict:
+        """Index Python files in the project.
+
+        Args:
+            paths: Specific paths to index. If None, indexes project root.
+            include: Glob patterns to include (e.g., ["src/**/*.py"])
+            exclude: Glob patterns to exclude (e.g., ["**/test_*.py"])
+            force: Force re-indexing even if files haven't changed
+
+        Returns:
+            Dictionary with indexing statistics
+        """
+        return self.indexer.index(
+            paths=paths,
+            include=include,
+            exclude=exclude,
+            force=force,
+        )
+
+    def search(
+        self,
+        query: str,
+        type: str | None = None,
+        limit: int = 20,
+    ) -> list[SearchResult]:
+        """Full-text search definitions.
+
+        Args:
+            query: Search query string
+            type: Filter by definition type (function, class, variable, etc.)
+            limit: Maximum number of results
+
+        Returns:
+            List of SearchResult objects
+        """
+        return self.search_engine.search(query, type=type, limit=limit)
+
+    def get_definition(self, name: str) -> Definition | None:
+        """Get a definition by its full name.
+
+        Args:
+            name: Fully qualified name (e.g., "mymodule.MyClass.method")
+
+        Returns:
+            Definition object or None if not found
+        """
+        return self.search_engine.get_definition(name)
+
+    def references(self, name: str) -> list[Reference]:
+        """Find all references to a definition.
+
+        Args:
+            name: Name to find references for
+
+        Returns:
+            List of Reference objects
+        """
+        return self.search_engine.find_references(name)
+
+    def query(self, sql: str) -> list[dict]:
+        """Execute a raw SQL query.
+
+        Args:
+            sql: SQL query string
+
+        Returns:
+            List of result dictionaries
+        """
+        return self.db.execute(sql).fetchall()
+
+    def stats(self) -> dict:
+        """Get database statistics.
+
+        Returns:
+            Dictionary with counts and other statistics
+        """
+        return self.db.get_stats()
+
+    def close(self):
+        """Close the database connection."""
+        self.db.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+
+__all__ = [
+    "__version__",
+    "JediDB",
+    "Database",
+    "Indexer",
+    "SearchEngine",
+    "Analyzer",
+    "Config",
+    "FileRecord",
+    "Definition",
+    "Reference",
+    "Import",
+    "SearchResult",
+]

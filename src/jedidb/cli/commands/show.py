@@ -1,0 +1,107 @@
+"""Show command for JediDB CLI."""
+
+from pathlib import Path
+from typing import Optional
+
+import typer
+
+from jedidb import JediDB
+from jedidb.config import Config
+from jedidb.cli.formatters import (
+    console,
+    format_definition_detail,
+    format_references_table,
+    format_json,
+    print_error,
+    print_info,
+)
+
+
+def show_cmd(
+    name: str = typer.Argument(
+        ...,
+        help="Name or full name of the definition",
+    ),
+    refs: bool = typer.Option(
+        False,
+        "--refs",
+        "-r",
+        help="Show references to this definition",
+    ),
+    output_format: str = typer.Option(
+        "pretty",
+        "--format",
+        "-f",
+        help="Output format: pretty, json",
+    ),
+    db_path: Optional[Path] = typer.Option(
+        None,
+        "--db-path",
+        "-d",
+        help="Database path (overrides config)",
+    ),
+):
+    """Show details for a definition.
+
+    Display full information including signature, docstring, and optionally references.
+    """
+    # Find project root
+    project_root = Config.find_project_root()
+    if project_root is None:
+        project_root = Path.cwd()
+
+    try:
+        jedidb = JediDB(path=str(project_root), db_path=str(db_path) if db_path else None)
+    except Exception as e:
+        print_error(f"Failed to open database: {e}")
+        raise typer.Exit(1)
+
+    definition = jedidb.search_engine.get_definition(name)
+
+    if not definition:
+        jedidb.close()
+        print_error(f"Definition not found: {name}")
+        raise typer.Exit(1)
+
+    references = []
+    if refs:
+        references = jedidb.search_engine.find_references(definition.name)
+
+    jedidb.close()
+
+    if output_format == "json":
+        data = {
+            "definition": {
+                "id": definition.id,
+                "name": definition.name,
+                "full_name": definition.full_name,
+                "type": definition.type,
+                "file": definition.file_path,
+                "line": definition.line,
+                "column": definition.column,
+                "signature": definition.signature,
+                "docstring": definition.docstring,
+                "is_public": definition.is_public,
+            }
+        }
+        if refs:
+            data["references"] = [
+                {
+                    "file": r.file_path,
+                    "line": r.line,
+                    "column": r.column,
+                    "context": r.context,
+                }
+                for r in references
+            ]
+        console.print(format_json(data))
+    else:
+        console.print(format_definition_detail(definition))
+
+        if refs:
+            console.print()
+            if references:
+                console.print(f"[bold]References ({len(references)}):[/bold]")
+                console.print(format_references_table(references))
+            else:
+                print_info("No references found")

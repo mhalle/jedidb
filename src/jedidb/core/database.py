@@ -1,0 +1,408 @@
+"""DuckDB database management for JediDB."""
+
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import duckdb
+
+from jedidb.core.models import Definition, FileRecord, Import, Reference
+
+
+SCHEMA_SQL = """
+-- Indexed files with modification tracking
+CREATE SEQUENCE IF NOT EXISTS files_id_seq;
+CREATE TABLE IF NOT EXISTS files (
+    id INTEGER PRIMARY KEY DEFAULT nextval('files_id_seq'),
+    path TEXT UNIQUE NOT NULL,
+    hash TEXT NOT NULL,
+    size INTEGER,
+    modified_at TIMESTAMP,
+    indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Definitions (functions, classes, variables, parameters)
+CREATE SEQUENCE IF NOT EXISTS definitions_id_seq;
+CREATE TABLE IF NOT EXISTS definitions (
+    id INTEGER PRIMARY KEY DEFAULT nextval('definitions_id_seq'),
+    file_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    full_name TEXT,
+    type TEXT NOT NULL,
+    line INTEGER NOT NULL,
+    col INTEGER NOT NULL,
+    end_line INTEGER,
+    end_col INTEGER,
+    signature TEXT,
+    docstring TEXT,
+    parent_id INTEGER,
+    is_public BOOLEAN DEFAULT TRUE
+);
+
+-- References (usages of definitions)
+CREATE SEQUENCE IF NOT EXISTS refs_id_seq;
+CREATE TABLE IF NOT EXISTS refs (
+    id INTEGER PRIMARY KEY DEFAULT nextval('refs_id_seq'),
+    file_id INTEGER NOT NULL,
+    definition_id INTEGER,
+    name TEXT NOT NULL,
+    line INTEGER NOT NULL,
+    col INTEGER NOT NULL,
+    context TEXT
+);
+
+-- Imports
+CREATE SEQUENCE IF NOT EXISTS imports_id_seq;
+CREATE TABLE IF NOT EXISTS imports (
+    id INTEGER PRIMARY KEY DEFAULT nextval('imports_id_seq'),
+    file_id INTEGER NOT NULL,
+    module TEXT NOT NULL,
+    name TEXT,
+    alias TEXT,
+    line INTEGER NOT NULL
+);
+
+-- Create indexes for faster lookups
+CREATE INDEX IF NOT EXISTS idx_definitions_name ON definitions(name);
+CREATE INDEX IF NOT EXISTS idx_definitions_full_name ON definitions(full_name);
+CREATE INDEX IF NOT EXISTS idx_definitions_type ON definitions(type);
+CREATE INDEX IF NOT EXISTS idx_definitions_file_id ON definitions(file_id);
+CREATE INDEX IF NOT EXISTS idx_refs_name ON refs(name);
+CREATE INDEX IF NOT EXISTS idx_refs_file_id ON refs(file_id);
+CREATE INDEX IF NOT EXISTS idx_imports_module ON imports(module);
+CREATE INDEX IF NOT EXISTS idx_imports_file_id ON imports(file_id);
+CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
+"""
+
+FTS_SETUP_SQL = """
+-- Install and load FTS extension
+INSTALL fts;
+LOAD fts;
+"""
+
+
+class Database:
+    """DuckDB database connection and operations."""
+
+    def __init__(self, db_path: Path | str):
+        """Initialize database connection.
+
+        Args:
+            db_path: Path to the DuckDB database file
+        """
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn: duckdb.DuckDBPyConnection | None = None
+        self._fts_initialized = False
+
+    @property
+    def conn(self) -> duckdb.DuckDBPyConnection:
+        """Get or create database connection."""
+        if self._conn is None:
+            self._conn = duckdb.connect(str(self.db_path))
+            self._init_schema()
+        return self._conn
+
+    def _init_schema(self):
+        """Initialize database schema."""
+        self.conn.execute(SCHEMA_SQL)
+
+    def _init_fts(self):
+        """Initialize full-text search extension."""
+        if self._fts_initialized:
+            return
+
+        try:
+            self.conn.execute(FTS_SETUP_SQL)
+            self._fts_initialized = True
+        except Exception:
+            # FTS extension might already be loaded
+            self._fts_initialized = True
+
+    def create_fts_index(self):
+        """Create or recreate the FTS index on definitions."""
+        self._init_fts()
+
+        # Drop existing FTS index if it exists
+        try:
+            self.conn.execute("PRAGMA drop_fts_index('definitions')")
+        except Exception:
+            pass  # Index might not exist
+
+        # Create new FTS index
+        self.conn.execute(
+            "PRAGMA create_fts_index('definitions', 'id', 'name', 'full_name', 'docstring', overwrite=1)"
+        )
+
+    def execute(self, sql: str, params: tuple | list | None = None) -> duckdb.DuckDBPyRelation:
+        """Execute a SQL query.
+
+        Args:
+            sql: SQL query string
+            params: Optional query parameters
+
+        Returns:
+            Query result relation
+        """
+        if params:
+            return self.conn.execute(sql, params)
+        return self.conn.execute(sql)
+
+    @contextmanager
+    def transaction(self):
+        """Context manager for database transactions."""
+        self.conn.execute("BEGIN TRANSACTION")
+        try:
+            yield
+            self.conn.execute("COMMIT")
+        except Exception:
+            self.conn.execute("ROLLBACK")
+            raise
+
+    # File operations
+
+    def get_file(self, path: str) -> FileRecord | None:
+        """Get a file record by path."""
+        result = self.execute(
+            "SELECT id, path, hash, size, modified_at, indexed_at FROM files WHERE path = ?",
+            (path,)
+        ).fetchone()
+
+        if result:
+            return FileRecord(
+                id=result[0],
+                path=result[1],
+                hash=result[2],
+                size=result[3],
+                modified_at=result[4],
+                indexed_at=result[5],
+            )
+        return None
+
+    def insert_file(self, file_record: FileRecord) -> int:
+        """Insert a file record and return its ID."""
+        result = self.execute(
+            """
+            INSERT INTO files (path, hash, size, modified_at, indexed_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            RETURNING id
+            """,
+            (file_record.path, file_record.hash, file_record.size, file_record.modified_at)
+        ).fetchone()
+        return result[0]
+
+    def update_file(self, file_record: FileRecord):
+        """Update a file record."""
+        self.execute(
+            """
+            UPDATE files
+            SET hash = ?, size = ?, modified_at = ?, indexed_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (file_record.hash, file_record.size, file_record.modified_at, file_record.id)
+        )
+
+    def delete_file(self, file_id: int):
+        """Delete a file and all related records."""
+        # Delete related records first (manual cascade)
+        self.execute("DELETE FROM refs WHERE file_id = ?", (file_id,))
+        self.execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
+        self.execute("DELETE FROM definitions WHERE file_id = ?", (file_id,))
+        self.execute("DELETE FROM files WHERE id = ?", (file_id,))
+
+    def delete_file_by_path(self, path: str):
+        """Delete a file by path."""
+        # Get file id first
+        result = self.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
+        if result:
+            self.delete_file(result[0])
+
+    # Definition operations
+
+    def insert_definition(self, definition: Definition) -> int:
+        """Insert a definition and return its ID."""
+        result = self.execute(
+            """
+            INSERT INTO definitions
+            (file_id, name, full_name, type, line, col, end_line, end_col,
+             signature, docstring, parent_id, is_public)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
+            """,
+            (
+                definition.file_id,
+                definition.name,
+                definition.full_name,
+                definition.type,
+                definition.line,
+                definition.column,
+                definition.end_line,
+                definition.end_column,
+                definition.signature,
+                definition.docstring,
+                definition.parent_id,
+                definition.is_public,
+            )
+        ).fetchone()
+        return result[0]
+
+    def insert_definitions_batch(self, definitions: list[Definition]):
+        """Insert multiple definitions in a batch."""
+        if not definitions:
+            return
+
+        data = [
+            (
+                d.file_id, d.name, d.full_name, d.type, d.line, d.column,
+                d.end_line, d.end_column, d.signature, d.docstring,
+                d.parent_id, d.is_public
+            )
+            for d in definitions
+        ]
+
+        self.conn.executemany(
+            """
+            INSERT INTO definitions
+            (file_id, name, full_name, type, line, col, end_line, end_col,
+             signature, docstring, parent_id, is_public)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            data
+        )
+
+    def get_definitions_by_file(self, file_id: int) -> list[Definition]:
+        """Get all definitions in a file."""
+        results = self.execute(
+            """
+            SELECT id, file_id, name, full_name, type, line, col,
+                   end_line, end_col, signature, docstring, parent_id, is_public
+            FROM definitions WHERE file_id = ?
+            """,
+            (file_id,)
+        ).fetchall()
+
+        return [
+            Definition(
+                id=r[0], file_id=r[1], name=r[2], full_name=r[3], type=r[4],
+                line=r[5], column=r[6], end_line=r[7], end_column=r[8],
+                signature=r[9], docstring=r[10], parent_id=r[11], is_public=r[12]
+            )
+            for r in results
+        ]
+
+    # Reference operations
+
+    def insert_reference(self, reference: Reference) -> int:
+        """Insert a reference and return its ID."""
+        result = self.execute(
+            """
+            INSERT INTO refs (file_id, definition_id, name, line, col, context)
+            VALUES (?, ?, ?, ?, ?, ?)
+            RETURNING id
+            """,
+            (
+                reference.file_id,
+                reference.definition_id,
+                reference.name,
+                reference.line,
+                reference.column,
+                reference.context,
+            )
+        ).fetchone()
+        return result[0]
+
+    def insert_references_batch(self, references: list[Reference]):
+        """Insert multiple references in a batch."""
+        if not references:
+            return
+
+        data = [
+            (r.file_id, r.definition_id, r.name, r.line, r.column, r.context)
+            for r in references
+        ]
+
+        self.conn.executemany(
+            """
+            INSERT INTO refs (file_id, definition_id, name, line, col, context)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            data
+        )
+
+    # Import operations
+
+    def insert_import(self, imp: Import) -> int:
+        """Insert an import and return its ID."""
+        result = self.execute(
+            """
+            INSERT INTO imports (file_id, module, name, alias, line)
+            VALUES (?, ?, ?, ?, ?)
+            RETURNING id
+            """,
+            (imp.file_id, imp.module, imp.name, imp.alias, imp.line)
+        ).fetchone()
+        return result[0]
+
+    def insert_imports_batch(self, imports: list[Import]):
+        """Insert multiple imports in a batch."""
+        if not imports:
+            return
+
+        data = [(i.file_id, i.module, i.name, i.alias, i.line) for i in imports]
+
+        self.conn.executemany(
+            """
+            INSERT INTO imports (file_id, module, name, alias, line)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            data
+        )
+
+    # Stats and queries
+
+    def get_stats(self) -> dict[str, Any]:
+        """Get database statistics."""
+        stats = {}
+
+        # File count
+        result = self.execute("SELECT COUNT(*) FROM files").fetchone()
+        stats["total_files"] = result[0]
+
+        # Definition count
+        result = self.execute("SELECT COUNT(*) FROM definitions").fetchone()
+        stats["total_definitions"] = result[0]
+
+        # Reference count
+        result = self.execute("SELECT COUNT(*) FROM refs").fetchone()
+        stats["total_references"] = result[0]
+
+        # Import count
+        result = self.execute("SELECT COUNT(*) FROM imports").fetchone()
+        stats["total_imports"] = result[0]
+
+        # Definitions by type
+        results = self.execute(
+            "SELECT type, COUNT(*) FROM definitions GROUP BY type ORDER BY COUNT(*) DESC"
+        ).fetchall()
+        stats["definitions_by_type"] = {r[0]: r[1] for r in results}
+
+        # Last indexed
+        result = self.execute(
+            "SELECT MAX(indexed_at) FROM files"
+        ).fetchone()
+        stats["last_indexed"] = result[0]
+
+        return stats
+
+    def close(self):
+        """Close the database connection."""
+        if self._conn:
+            self._conn.close()
+            self._conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
