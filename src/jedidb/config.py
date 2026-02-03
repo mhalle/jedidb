@@ -94,38 +94,61 @@ class Config:
         }
 
 
-def create_config_file(project_path: Path, db_path: Path | None = None) -> Path:
+def _format_toml_list(items: list[str]) -> str:
+    """Format a list of strings as a TOML array."""
+    escaped = [f'"{item}"' for item in items]
+    return "[" + ", ".join(escaped) + "]"
+
+
+def create_config_file(
+    project_path: Path,
+    db_path: Path | None = None,
+    include: list[str] | None = None,
+    exclude: list[str] | None = None,
+) -> Path:
     """Create a default configuration file.
 
     Args:
         project_path: Project root directory
         db_path: Optional custom database path
+        include: Optional list of glob patterns to include
+        exclude: Optional list of glob patterns to exclude
 
     Returns:
         Path to the created config file
     """
     config_file = project_path / CONFIG_FILE_NAME
 
-    content = '''# JediDB Configuration
+    lines = ["# JediDB Configuration", "", "[jedidb]"]
 
-[jedidb]
-# Database path (relative to project root or absolute)
-# db_path = ".jedidb/jedidb.duckdb"
-
-# Glob patterns for files to include
-# include = ["src/**/*.py", "lib/**/*.py"]
-
-# Glob patterns for files to exclude
-# exclude = ["**/test_*.py", "**/*_test.py"]
-'''
-
+    # Database path
     if db_path:
-        content = content.replace(
-            '# db_path = ".jedidb/jedidb.duckdb"',
-            f'db_path = "{db_path}"'
-        )
+        lines.append(f'db_path = "{db_path}"')
+    else:
+        lines.append("# Database path (relative to project root or absolute)")
+        lines.append('# db_path = ".jedidb/jedidb.duckdb"')
+
+    lines.append("")
+
+    # Include patterns
+    if include:
+        lines.append(f"include = {_format_toml_list(include)}")
+    else:
+        lines.append("# Glob patterns for files to include")
+        lines.append('# include = ["src/**/*.py", "lib/**/*.py"]')
+
+    lines.append("")
+
+    # Exclude patterns
+    if exclude:
+        lines.append(f"exclude = {_format_toml_list(exclude)}")
+    else:
+        lines.append("# Glob patterns for files to exclude")
+        lines.append('# exclude = ["**/test_*.py", "**/*_test.py"]')
+
+    lines.append("")
 
     with open(config_file, "w") as f:
-        f.write(content)
+        f.write("\n".join(lines))
 
     return config_file

@@ -21,6 +21,18 @@ def init_cmd(
         "-d",
         help="Custom database path",
     ),
+    include: Optional[list[str]] = typer.Option(
+        None,
+        "--include",
+        "-i",
+        help="Glob pattern for files to include (can be used multiple times)",
+    ),
+    exclude: Optional[list[str]] = typer.Option(
+        None,
+        "--exclude",
+        "-e",
+        help="Glob pattern for files to exclude (can be used multiple times)",
+    ),
     force: bool = typer.Option(
         False,
         "--force",
@@ -52,7 +64,7 @@ def init_cmd(
     print_success(f"Created directory: {db_dir}")
 
     # Create configuration file
-    config_path = create_config_file(project_path, db_path)
+    config_path = create_config_file(project_path, db_path, include, exclude)
     print_success(f"Created configuration: {config_path}")
 
     # Initialize database
@@ -72,6 +84,9 @@ def init_cmd(
 
     console.print()
     print_info("Next steps:")
-    console.print("  1. Edit .jedidb.toml to configure include/exclude patterns")
-    console.print("  2. Run [cyan]jedidb index[/cyan] to index your Python files")
-    console.print("  3. Run [cyan]jedidb search <query>[/cyan] to search definitions")
+    if not include and not exclude:
+        console.print("  1. Edit .jedidb.toml to configure include/exclude patterns (optional)")
+        console.print("  2. Run [cyan]jedidb index[/cyan] to index your Python files")
+    else:
+        console.print("  1. Run [cyan]jedidb index[/cyan] to index your Python files")
+    console.print(f"  {'3' if not include and not exclude else '2'}. Run [cyan]jedidb search <query>[/cyan] to search definitions")
