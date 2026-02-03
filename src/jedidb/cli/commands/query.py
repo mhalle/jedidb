@@ -34,6 +34,16 @@ def query_cmd(
         "-d",
         help="Database path (overrides config)",
     ),
+    project: Optional[Path] = typer.Option(
+        None,
+        "--project",
+        "-C",
+        help="Project directory",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True,
+    ),
 ):
     """Execute a raw SQL query against the database.
 
@@ -43,8 +53,8 @@ def query_cmd(
     """
     from jedidb.cli.formatters import get_project_path
 
-    # Find project root (CLI -C flag takes precedence)
-    project_root = get_project_path(ctx)
+    # Find project root (command -C takes precedence over global -C)
+    project_root = project or get_project_path(ctx)
     if project_root is None:
         project_root = Config.find_project_root()
     if project_root is None:
