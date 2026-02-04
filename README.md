@@ -1,14 +1,15 @@
 # JediDB
 
-Jedi code analyzer with DuckDB storage and full-text search.
+Python code index with Jedi analysis and full-text search. Stores data as compressed parquet files (~30-40x smaller than SQLite/DuckDB).
 
 ## Features
 
-- **Code Analysis**: Uses Jedi to analyze Python code, extracting definitions, references, and imports
-- **DuckDB Storage**: Stores analysis results in DuckDB for fast querying
-- **Full-Text Search**: Search across function names, class names, and docstrings
+- **Code Analysis**: Extracts definitions, references, and imports using Jedi
+- **Compact Storage**: Parquet files with zstd compression (~1.5MB for 24K definitions)
+- **Full-Text Search**: BM25 ranking with CamelCase/snake_case tokenization
+- **Prefix Search**: Find definitions starting with a pattern (e.g., `get*`)
 - **Incremental Updates**: Only re-indexes changed files
-- **CLI & Library**: Use from command line or as a Python library
+- **CLI & Library**: Command line tool and Python API
 
 ## Installation
 
@@ -24,92 +25,157 @@ uv add jedidb
 
 ## Quick Start
 
-### CLI Usage
-
 ```bash
-# Initialize jedidb in your project
+# Initialize and index
 jedidb init
-
-# Index Python files
 jedidb index
 
-# Search for definitions
-jedidb search "parse"
+# Search
+jedidb search parse                    # full-text search
+jedidb search "get*"                   # prefix search
+jedidb search volume --type function   # filter by type
+jedidb search test --format jsonl      # newline-delimited JSON output
 
-# Show details for a specific definition
-jedidb show MyClass
-
-# View statistics
+# Explore
 jedidb stats
-
-# Run SQL queries
+jedidb show MyClass
 jedidb query "SELECT name, type FROM definitions WHERE type = 'class'"
 ```
 
-### Library Usage
+## CLI Reference
+
+```
+jedidb [--project DIR] COMMAND
+
+Commands:
+  init     Initialize jedidb in a project
+  index    Index Python files (incremental by default)
+  search   Full-text search definitions
+  query    Run raw SQL queries
+  show     Show details for a definition
+  export   Export to JSON/CSV
+  stats    Show database statistics
+  clean    Remove stale entries or reset database
+```
+
+### search
+
+```
+jedidb search [OPTIONS] QUERY
+
+Arguments:
+  QUERY  Search query (use * suffix for prefix search, e.g., 'get*')
+
+Options:
+  -t, --type    [function|class|variable|module|param]  Filter by type
+  -n, --limit   INTEGER                                  Max results [default: 20]
+  -p, --private                                          Include private (_) defs
+  -f, --format  [table|json|jsonl]                       Output format
+  -C, --project DIRECTORY                                Project directory
+```
+
+### index
+
+```
+jedidb index [OPTIONS] [PATHS]...
+
+Options:
+  -i, --include  PATTERN  Glob patterns to include (e.g., 'src/**/*.py')
+  -e, --exclude  PATTERN  Glob patterns to exclude
+  -f, --force             Force re-index all files
+  -C, --project           Project directory
+```
+
+## Library Usage
 
 ```python
 from jedidb import JediDB
 
-# Initialize
 db = JediDB(path="./myproject")
 
-# Index files
+# Index
 db.index(include=["src/**/*.py"], exclude=["**/test_*.py"])
 
 # Search
 results = db.search("parse", type="function", limit=10)
-for result in results:
-    print(f"{result.name} in {result.file_path}:{result.line}")
+for r in results:
+    print(f"{r.name} ({r.type}) {r.file_path}:{r.line}")
+
+# Prefix search
+results = db.search("get*")
 
 # Get definition details
-defn = db.get_definition("mymodule.MyClass.method")
-print(defn.docstring)
+defn = db.get_definition("mymodule.MyClass")
+print(defn.signature, defn.docstring)
 
 # Find references
 refs = db.references("MyClass")
 
-# Raw SQL queries
-rows = db.query("SELECT name, type FROM definitions WHERE type = 'class'")
+# Raw SQL
+rows = db.query("SELECT * FROM definitions WHERE type = 'class'")
+
+db.close()
 ```
-
-## CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `init` | Initialize jedidb in a project |
-| `index` | Index Python files |
-| `search` | Full-text search definitions |
-| `query` | Run raw SQL queries |
-| `show` | Show details for a definition |
-| `export` | Export to JSON/CSV |
-| `stats` | Show database statistics |
-| `clean` | Remove stale entries or reset |
 
 ## Configuration
 
-Create a `.jedidb.toml` file in your project root:
+`.jedidb.toml` in project root:
 
 ```toml
 [jedidb]
-# Database path (relative to project root or absolute)
-db_path = ".jedidb/jedidb.duckdb"
+db_path = ".jedidb"
 
-# Glob patterns for files to include
-include = ["src/**/*.py", "lib/**/*.py"]
-
-# Glob patterns for files to exclude
+include = ["src/**/*.py"]
 exclude = ["**/test_*.py", "**/*_test.py"]
 ```
 
+## Storage
+
+Data is stored as compressed parquet files in `.jedidb/`:
+
+```
+.jedidb/
+  definitions.parquet   # functions, classes, variables
+  files.parquet         # indexed files with hashes
+  refs.parquet          # references/usages
+  imports.parquet       # import statements
+```
+
+Typical sizes:
+- 24K definitions → ~1.5MB total
+- 264 files → 30-40x smaller than DuckDB
+
+## Search Features
+
+**Full-text search** with BM25 ranking:
+```bash
+jedidb search "parse json"      # finds parseJson, parse_json, JSONParser
+```
+
+**Prefix search** with `*` suffix:
+```bash
+jedidb search "get*"            # finds get, getattr, getValue, get_config
+jedidb search "MRML*"           # case-insensitive prefix matching
+```
+
+**CamelCase/snake_case aware**: Searching `volume` finds `volumeNode`, `crop_volume`, `VolumeRenderer`.
+
 ## Database Schema
 
-JediDB stores data in four tables:
+```sql
+-- definitions: functions, classes, variables, params, modules
+SELECT name, full_name, type, line, signature, docstring
+FROM definitions WHERE type = 'function';
 
-- **files**: Indexed files with modification tracking
-- **definitions**: Functions, classes, variables, parameters
-- **refs**: References to definitions
-- **imports**: Import statements
+-- files: indexed files with modification tracking
+SELECT path, hash, size, indexed_at FROM files;
+
+-- refs: references to names
+SELECT name, line, context FROM refs WHERE name = 'MyClass';
+
+-- imports: import statements
+SELECT module, name, alias FROM imports;
+```
 
 ## Requirements
 
@@ -118,23 +184,6 @@ JediDB stores data in four tables:
 - duckdb >= 1.0.0
 - typer >= 0.12.0
 - rich >= 13.0.0
-
-## Development
-
-```bash
-# Clone repository
-git clone https://github.com/yourusername/jedidb
-cd jedidb
-
-# Install with dev dependencies
-uv sync --all-extras
-
-# Run tests
-uv run pytest
-
-# Run linter
-uv run ruff check src tests
-```
 
 ## License
 
