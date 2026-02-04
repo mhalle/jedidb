@@ -1,6 +1,6 @@
 """JediDB - Jedi code analyzer with DuckDB storage and full-text search."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from jedidb.core.database import Database
 from jedidb.core.indexer import Indexer
