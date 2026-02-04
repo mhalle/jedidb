@@ -140,7 +140,10 @@ def test_helper():
 @pytest.fixture
 def jedidb_instance(temp_dir, sample_python_file):
     """Create a JediDB instance with sample data."""
-    db = JediDB(path=str(temp_dir))
+    index_dir = temp_dir / ".jedidb"
+    index_dir.mkdir()
+    (index_dir / "db").mkdir()
+    db = JediDB(source=temp_dir, index=index_dir)
     yield db
     db.close()
 
@@ -148,7 +151,7 @@ def jedidb_instance(temp_dir, sample_python_file):
 @pytest.fixture
 def indexed_jedidb(jedidb_instance, sample_python_file):
     """Create a JediDB instance with indexed sample data."""
-    jedidb_instance.index(paths=[str(sample_python_file)])
+    jedidb_instance.index_files(paths=[str(sample_python_file)])
     return jedidb_instance
 
 

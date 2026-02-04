@@ -21,219 +21,224 @@ class TestCLI:
 
     def test_init_command(self, temp_dir):
         """Test init command."""
-        result = runner.invoke(app, ["init", str(temp_dir)])
+        result = runner.invoke(app, ["-C", str(temp_dir), "init"])
         assert result.exit_code == 0
 
         # Check that files were created
         assert (temp_dir / ".jedidb").exists()
-        assert (temp_dir / ".jedidb.toml").exists()
+        assert (temp_dir / ".jedidb" / "config.toml").exists()
+        assert (temp_dir / ".jedidb" / "db").exists()
 
     def test_init_already_exists(self, temp_dir):
         """Test init when already initialized."""
         # Initialize once
-        runner.invoke(app, ["init", str(temp_dir)])
+        runner.invoke(app, ["-C", str(temp_dir), "init"])
 
         # Try again without force
-        result = runner.invoke(app, ["init", str(temp_dir)])
+        result = runner.invoke(app, ["-C", str(temp_dir), "init"])
         assert result.exit_code == 1
 
         # With force should succeed
-        result = runner.invoke(app, ["init", str(temp_dir), "--force"])
+        result = runner.invoke(app, ["-C", str(temp_dir), "init", "--force"])
         assert result.exit_code == 0
 
     def test_index_command(self, sample_project):
         """Test index command."""
-        db_path = sample_project / ".jedidb" / "jedidb.duckdb"
-
         # Initialize first
-        runner.invoke(app, ["init", str(sample_project)])
+        runner.invoke(app, ["-C", str(sample_project), "init"])
 
-        # Index with explicit db-path
+        # Index
         result = runner.invoke(app, [
+            "-C", str(sample_project),
             "index",
             str(sample_project / "src"),
-            "--db-path", str(db_path)
         ])
         assert result.exit_code == 0
         assert "indexed" in result.output.lower()
 
     def test_index_with_patterns(self, sample_project):
         """Test index with include/exclude patterns."""
-        db_path = sample_project / ".jedidb" / "jedidb.duckdb"
-
-        runner.invoke(app, ["init", str(sample_project)])
+        runner.invoke(app, ["-C", str(sample_project), "init"])
 
         result = runner.invoke(app, [
+            "-C", str(sample_project),
             "index",
-            str(sample_project),
             "--exclude", "**/test_*.py",
             "--quiet",
-            "--db-path", str(db_path)
         ])
         assert result.exit_code == 0
 
     def test_search_command(self, sample_project):
         """Test search command."""
-        db_path = sample_project / ".jedidb" / "jedidb.duckdb"
+        runner.invoke(app, ["-C", str(sample_project), "init"])
+        runner.invoke(app, ["-C", str(sample_project), "index"])
 
-        runner.invoke(app, ["init", str(sample_project)])
-        runner.invoke(app, ["index", str(sample_project), "--db-path", str(db_path)])
-
-        result = runner.invoke(app, ["search", "helper", "--db-path", str(db_path)])
+        result = runner.invoke(app, ["-C", str(sample_project), "search", "helper"])
         # Should find helper_function
         assert result.exit_code == 0
 
     def test_search_with_type_filter(self, sample_project):
         """Test search with type filter."""
-        db_path = sample_project / ".jedidb" / "jedidb.duckdb"
-
-        runner.invoke(app, ["init", str(sample_project)])
-        runner.invoke(app, ["index", str(sample_project), "--db-path", str(db_path)])
+        runner.invoke(app, ["-C", str(sample_project), "init"])
+        runner.invoke(app, ["-C", str(sample_project), "index"])
 
         result = runner.invoke(app, [
+            "-C", str(sample_project),
             "search", "Config",
             "--type", "class",
-            "--db-path", str(db_path)
         ])
         assert result.exit_code == 0
 
     def test_search_json_output(self, sample_project):
         """Test search with JSON output."""
-        db_path = sample_project / ".jedidb" / "jedidb.duckdb"
-
-        runner.invoke(app, ["init", str(sample_project)])
-        runner.invoke(app, ["index", str(sample_project), "--db-path", str(db_path)])
+        runner.invoke(app, ["-C", str(sample_project), "init"])
+        runner.invoke(app, ["-C", str(sample_project), "index"])
 
         result = runner.invoke(app, [
+            "-C", str(sample_project),
             "search", "function",
             "--format", "json",
-            "--db-path", str(db_path)
         ])
         assert result.exit_code == 0
 
     def test_stats_command(self, sample_project):
         """Test stats command."""
-        db_path = sample_project / ".jedidb" / "jedidb.duckdb"
+        runner.invoke(app, ["-C", str(sample_project), "init"])
+        runner.invoke(app, ["-C", str(sample_project), "index"])
 
-        runner.invoke(app, ["init", str(sample_project)])
-        runner.invoke(app, ["index", str(sample_project), "--db-path", str(db_path)])
-
-        result = runner.invoke(app, ["stats", "--db-path", str(db_path)])
+        result = runner.invoke(app, ["-C", str(sample_project), "stats"])
         assert result.exit_code == 0
         assert "files" in result.output.lower() or "Files" in result.output
 
     def test_stats_json_output(self, sample_project):
         """Test stats with JSON output."""
-        db_path = sample_project / ".jedidb" / "jedidb.duckdb"
-
-        runner.invoke(app, ["init", str(sample_project)])
-        runner.invoke(app, ["index", str(sample_project), "--db-path", str(db_path)])
+        runner.invoke(app, ["-C", str(sample_project), "init"])
+        runner.invoke(app, ["-C", str(sample_project), "index"])
 
         result = runner.invoke(app, [
+            "-C", str(sample_project),
             "stats",
             "--format", "json",
-            "--db-path", str(db_path)
         ])
         assert result.exit_code == 0
         assert "total_files" in result.output
 
     def test_query_command(self, sample_project):
         """Test query command."""
-        db_path = sample_project / ".jedidb" / "jedidb.duckdb"
-
-        runner.invoke(app, ["init", str(sample_project)])
-        runner.invoke(app, ["index", str(sample_project), "--db-path", str(db_path)])
+        runner.invoke(app, ["-C", str(sample_project), "init"])
+        runner.invoke(app, ["-C", str(sample_project), "index"])
 
         result = runner.invoke(app, [
+            "-C", str(sample_project),
             "query",
             "SELECT COUNT(*) FROM definitions",
-            "--db-path", str(db_path)
         ])
         assert result.exit_code == 0
 
     def test_query_with_format(self, sample_project):
         """Test query with different formats."""
-        db_path = sample_project / ".jedidb" / "jedidb.duckdb"
-
-        runner.invoke(app, ["init", str(sample_project)])
-        runner.invoke(app, ["index", str(sample_project), "--db-path", str(db_path)])
+        runner.invoke(app, ["-C", str(sample_project), "init"])
+        runner.invoke(app, ["-C", str(sample_project), "index"])
 
         # JSON format
         result = runner.invoke(app, [
+            "-C", str(sample_project),
             "query",
             "SELECT name, type FROM definitions LIMIT 3",
             "--format", "json",
-            "--db-path", str(db_path)
         ])
         assert result.exit_code == 0
 
         # CSV format
         result = runner.invoke(app, [
+            "-C", str(sample_project),
             "query",
             "SELECT name, type FROM definitions LIMIT 3",
             "--format", "csv",
-            "--db-path", str(db_path)
         ])
         assert result.exit_code == 0
 
     def test_show_command(self, sample_project):
         """Test show command."""
-        db_path = sample_project / ".jedidb" / "jedidb.duckdb"
-
-        runner.invoke(app, ["init", str(sample_project)])
-        runner.invoke(app, ["index", str(sample_project), "--db-path", str(db_path)])
+        runner.invoke(app, ["-C", str(sample_project), "init"])
+        runner.invoke(app, ["-C", str(sample_project), "index"])
 
         result = runner.invoke(app, [
+            "-C", str(sample_project),
             "show", "helper_function",
-            "--db-path", str(db_path)
         ])
         # May or may not find depending on indexing
         assert result.exit_code in [0, 1]
 
     def test_export_command(self, sample_project):
         """Test export command."""
-        db_path = sample_project / ".jedidb" / "jedidb.duckdb"
         output_file = sample_project / "export.json"
 
-        runner.invoke(app, ["init", str(sample_project)])
-        runner.invoke(app, ["index", str(sample_project), "--db-path", str(db_path)])
+        runner.invoke(app, ["-C", str(sample_project), "init"])
+        runner.invoke(app, ["-C", str(sample_project), "index"])
 
         result = runner.invoke(app, [
+            "-C", str(sample_project),
             "export",
             "--output", str(output_file),
             "--format", "json",
-            "--db-path", str(db_path)
         ])
         assert result.exit_code == 0
         assert output_file.exists()
 
     def test_clean_command(self, sample_project):
         """Test clean command."""
-        db_path = sample_project / ".jedidb" / "jedidb.duckdb"
+        runner.invoke(app, ["-C", str(sample_project), "init"])
+        runner.invoke(app, ["-C", str(sample_project), "index"])
 
-        runner.invoke(app, ["init", str(sample_project)])
-        runner.invoke(app, ["index", str(sample_project), "--db-path", str(db_path)])
-
-        result = runner.invoke(app, ["clean", "--db-path", str(db_path)])
+        result = runner.invoke(app, ["-C", str(sample_project), "clean"])
         assert result.exit_code == 0
 
     def test_clean_all_command(self, sample_project):
         """Test clean --all command."""
-        db_path = sample_project / ".jedidb" / "jedidb.duckdb"
-
-        runner.invoke(app, ["init", str(sample_project)])
-        runner.invoke(app, ["index", str(sample_project), "--db-path", str(db_path)])
+        runner.invoke(app, ["-C", str(sample_project), "init"])
+        runner.invoke(app, ["-C", str(sample_project), "index"])
 
         result = runner.invoke(app, [
+            "-C", str(sample_project),
             "clean", "--all", "--force",
-            "--db-path", str(db_path)
         ])
         assert result.exit_code == 0
 
         # Stats should show 0 files
         result = runner.invoke(app, [
+            "-C", str(sample_project),
             "stats",
             "--format", "json",
-            "--db-path", str(db_path)
         ])
         assert '"total_files": 0' in result.output
+
+    def test_external_index(self, sample_project, temp_dir):
+        """Test using --index to store data outside source directory."""
+        external_index = temp_dir / "external_index"
+
+        # Initialize with external index
+        result = runner.invoke(app, [
+            "-C", str(sample_project),
+            "--index", str(external_index),
+            "init",
+        ])
+        assert result.exit_code == 0
+        assert external_index.exists()
+        assert (external_index / "config.toml").exists()
+        assert (external_index / "db").exists()
+
+        # Index with external index
+        result = runner.invoke(app, [
+            "-C", str(sample_project),
+            "--index", str(external_index),
+            "index",
+        ])
+        assert result.exit_code == 0
+
+        # Query using just --index (no -C needed for queries)
+        result = runner.invoke(app, [
+            "--index", str(external_index),
+            "stats",
+        ])
+        assert result.exit_code == 0

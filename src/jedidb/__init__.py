@@ -2,6 +2,8 @@
 
 __version__ = "0.2.2"
 
+from pathlib import Path
+
 from jedidb.core.database import Database
 from jedidb.core.indexer import Indexer
 from jedidb.core.search import SearchEngine
@@ -20,29 +22,33 @@ from jedidb.config import Config
 class JediDB:
     """Main interface for the JediDB code analyzer."""
 
-    def __init__(self, path: str = ".", db_path: str | None = None, resolve_refs: bool = True):
+    def __init__(self, source: Path | str, index: Path | str, resolve_refs: bool = True):
         """Initialize JediDB for a project.
 
         Args:
-            path: Project root directory
-            db_path: Optional custom database path. If None, uses .jedidb/
+            source: Source code directory
+            index: Index directory (where jedidb data lives)
             resolve_refs: Whether to resolve reference targets (enables call graph)
         """
-        self.config = Config(project_path=path, db_path=db_path)
-        self._parquet_dir = self.config.db_path.parent
+        self.source = Path(source).resolve()
+        self.index = Path(index).resolve()
+        self.db_dir = self.index / "db"
         self._resolve_refs = resolve_refs
 
-        # Prefer parquet if available, otherwise create new DuckDB
-        if (self._parquet_dir / "definitions.parquet").exists():
-            self.db = Database.open_parquet(self._parquet_dir)
-        else:
-            self.db = Database(self.config.db_path)
+        self.config = Config.load(self.index)
 
-        self.analyzer = Analyzer(self.config.project_path)
+        # Prefer parquet if available, otherwise create in-memory DuckDB
+        if (self.db_dir / "definitions.parquet").exists():
+            self.db = Database.open_parquet(self.db_dir)
+        else:
+            self.db_dir.mkdir(parents=True, exist_ok=True)
+            self.db = Database(":memory:")
+
+        self.analyzer = Analyzer(self.source)
         self.indexer = Indexer(self.db, self.analyzer, resolve_refs=resolve_refs)
         self.search_engine = SearchEngine(self.db)
 
-    def index(
+    def index_files(
         self,
         paths: list[str] | None = None,
         include: list[str] | None = None,
@@ -52,7 +58,7 @@ class JediDB:
         """Index Python files in the project.
 
         Args:
-            paths: Specific paths to index. If None, indexes project root.
+            paths: Specific paths to index. If None, indexes source root.
             include: Glob patterns to include (e.g., ["src/**/*.py"])
             exclude: Glob patterns to exclude (e.g., ["**/test_*.py"])
             force: Force re-indexing even if files haven't changed
@@ -69,11 +75,11 @@ class JediDB:
 
         # Always export to parquet (this is now the primary storage format)
         if stats["files_indexed"] > 0 or stats["files_removed"] > 0:
-            self.db.export_to_parquet(self._parquet_dir)
+            self.db.export_to_parquet(self.db_dir)
             stats["packed"] = True
             stats["parquet_size"] = sum(
                 f.stat().st_size
-                for f in self._parquet_dir.iterdir()
+                for f in self.db_dir.iterdir()
                 if f.suffix == ".parquet"
             )
 

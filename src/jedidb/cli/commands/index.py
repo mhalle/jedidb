@@ -7,15 +7,14 @@ from typing import Optional
 import typer
 
 from jedidb import JediDB
-from jedidb.config import Config
-from jedidb.cli.formatters import print_success, print_error, print_info
+from jedidb.cli.formatters import get_source_path, get_index_path, print_success, print_error, print_info
 
 
 def index_cmd(
     ctx: typer.Context,
     paths: Optional[list[str]] = typer.Argument(
         None,
-        help="Paths to index (default: project root)",
+        help="Paths to index (default: source root)",
     ),
     include: Optional[list[str]] = typer.Option(
         None,
@@ -35,22 +34,6 @@ def index_cmd(
         "-f",
         help="Force re-indexing of all files",
     ),
-    db_path: Optional[Path] = typer.Option(
-        None,
-        "--db-path",
-        "-d",
-        help="Database path (overrides config)",
-    ),
-    project: Optional[Path] = typer.Option(
-        None,
-        "--project",
-        "-C",
-        help="Project directory",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        resolve_path=True,
-    ),
     quiet: bool = typer.Option(
         False,
         "--quiet",
@@ -69,21 +52,11 @@ def index_cmd(
     Only changed files are re-indexed unless --force is used.
     Data is stored as compressed parquet files (~30-40x smaller than DuckDB).
     """
-    from jedidb.cli.formatters import get_project_path
-
-    # Find project root (command -C takes precedence over global -C)
-    project_root = project or get_project_path(ctx)
-    if project_root is None:
-        project_root = Config.find_project_root()
-    if project_root is None:
-        project_root = Path.cwd()
+    source = get_source_path(ctx)
+    index = get_index_path(ctx)
 
     try:
-        jedidb = JediDB(
-            path=str(project_root),
-            db_path=str(db_path) if db_path else None,
-            resolve_refs=resolve_refs,
-        )
+        jedidb = JediDB(source=source, index=index, resolve_refs=resolve_refs)
     except Exception as e:
         print_error(f"Failed to initialize database: {e}")
         raise typer.Exit(1)
@@ -114,7 +87,7 @@ def index_cmd(
 
             jedidb.indexer.progress_callback = on_progress
 
-            stats = jedidb.index(
+            stats = jedidb.index_files(
                 paths=paths,
                 include=all_include if all_include else None,
                 exclude=all_exclude if all_exclude else None,
@@ -126,14 +99,14 @@ def index_cmd(
 
         jedidb.indexer.progress_callback = on_progress
 
-        stats = jedidb.index(
+        stats = jedidb.index_files(
             paths=paths,
             include=all_include if all_include else None,
             exclude=all_exclude if all_exclude else None,
             force=force,
         )
     else:
-        stats = jedidb.index(
+        stats = jedidb.index_files(
             paths=paths,
             include=all_include if all_include else None,
             exclude=all_exclude if all_exclude else None,

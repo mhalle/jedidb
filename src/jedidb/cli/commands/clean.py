@@ -1,13 +1,9 @@
 """Clean command for JediDB CLI."""
 
-from pathlib import Path
-from typing import Optional
-
 import typer
 
 from jedidb import JediDB
-from jedidb.config import Config
-from jedidb.cli.formatters import print_success, print_error, print_warning
+from jedidb.cli.formatters import get_source_path, get_index_path, print_success, print_error, print_warning
 
 
 def clean_cmd(
@@ -23,22 +19,6 @@ def clean_cmd(
         "--stale/--no-stale",
         help="Remove entries for deleted files",
     ),
-    db_path: Optional[Path] = typer.Option(
-        None,
-        "--db-path",
-        "-d",
-        help="Database path (overrides config)",
-    ),
-    project: Optional[Path] = typer.Option(
-        None,
-        "--project",
-        "-C",
-        help="Project directory",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        resolve_path=True,
-    ),
     force: bool = typer.Option(
         False,
         "--force",
@@ -51,17 +31,11 @@ def clean_cmd(
     By default, removes entries for files that no longer exist.
     Use --all to completely reset the database.
     """
-    from jedidb.cli.formatters import get_project_path
-
-    # Find project root (command -C takes precedence over global -C)
-    project_root = project or get_project_path(ctx)
-    if project_root is None:
-        project_root = Config.find_project_root()
-    if project_root is None:
-        project_root = Path.cwd()
+    source = get_source_path(ctx)
+    index = get_index_path(ctx)
 
     try:
-        jedidb = JediDB(path=str(project_root), db_path=str(db_path) if db_path else None)
+        jedidb = JediDB(source=source, index=index)
     except Exception as e:
         print_error(f"Failed to open database: {e}")
         raise typer.Exit(1)
@@ -81,7 +55,7 @@ def clean_cmd(
         jedidb.db.execute("DELETE FROM files")
 
         # Re-export to parquet (so next open gets empty database)
-        jedidb.db.export_to_parquet(jedidb._parquet_dir)
+        jedidb.db.export_to_parquet(jedidb.db_dir)
 
         jedidb.close()
         print_success("Database reset successfully")
@@ -93,7 +67,7 @@ def clean_cmd(
         removed = 0
 
         for file_id, file_path in result:
-            full_path = project_root / file_path
+            full_path = source / file_path
             if not full_path.exists():
                 jedidb.db.delete_file(file_id)
                 removed += 1
@@ -101,7 +75,7 @@ def clean_cmd(
 
         # Re-export to parquet if we removed anything
         if removed > 0:
-            jedidb.db.export_to_parquet(jedidb._parquet_dir)
+            jedidb.db.export_to_parquet(jedidb.db_dir)
 
         jedidb.close()
 

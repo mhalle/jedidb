@@ -6,8 +6,7 @@ from typing import Optional
 import typer
 
 from jedidb import JediDB
-from jedidb.config import Config
-from jedidb.cli.formatters import format_json, print_error, print_success
+from jedidb.cli.formatters import get_source_path, get_index_path, format_json, print_error, print_success
 
 
 def export_cmd(
@@ -35,38 +34,16 @@ def export_cmd(
         "--type",
         help="Filter definitions by type",
     ),
-    db_path: Optional[Path] = typer.Option(
-        None,
-        "--db-path",
-        "-d",
-        help="Database path (overrides config)",
-    ),
-    project: Optional[Path] = typer.Option(
-        None,
-        "--project",
-        "-C",
-        help="Project directory",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        resolve_path=True,
-    ),
 ):
     """Export data to JSON or CSV.
 
     Export indexed data for external analysis or backup.
     """
-    from jedidb.cli.formatters import get_project_path
-
-    # Find project root (command -C takes precedence over global -C)
-    project_root = project or get_project_path(ctx)
-    if project_root is None:
-        project_root = Config.find_project_root()
-    if project_root is None:
-        project_root = Path.cwd()
+    source = get_source_path(ctx)
+    index = get_index_path(ctx)
 
     try:
-        jedidb = JediDB(path=str(project_root), db_path=str(db_path) if db_path else None)
+        jedidb = JediDB(source=source, index=index)
     except Exception as e:
         print_error(f"Failed to open database: {e}")
         raise typer.Exit(1)

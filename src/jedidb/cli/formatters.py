@@ -24,11 +24,14 @@ def get_default_format() -> OutputFormat:
     return OutputFormat.table if sys.stdout.isatty() else OutputFormat.jsonl
 
 
-def get_project_path(ctx: typer.Context) -> Path | None:
-    """Get project path from CLI context (set by -C/--project flag)."""
-    if ctx.obj and "project" in ctx.obj:
-        return ctx.obj["project"]
-    return None
+def get_source_path(ctx: typer.Context) -> Path:
+    """Get source path from CLI context (set by -C/--source flag)."""
+    return ctx.obj["source"]
+
+
+def get_index_path(ctx: typer.Context) -> Path:
+    """Get index path from CLI context (set by --index flag)."""
+    return ctx.obj["index"]
 
 
 def format_definition_table(definitions: list[Definition], show_file: bool = True) -> str:

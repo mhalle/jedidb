@@ -21,20 +21,26 @@ app = typer.Typer(
 @app.callback()
 def main_callback(
     ctx: typer.Context,
-    project: Optional[Path] = typer.Option(
+    source: Optional[Path] = typer.Option(
         None,
-        "--project",
         "-C",
-        help="Project directory (like git -C)",
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-        resolve_path=True,
+        "--source",
+        help="Source directory (default: current directory)",
+    ),
+    index_dir: Optional[Path] = typer.Option(
+        None,
+        "--index",
+        help="Index directory (default: <source>/.jedidb)",
     ),
 ):
     """Jedi code analyzer with DuckDB storage and full-text search."""
     ctx.ensure_object(dict)
-    ctx.obj["project"] = project
+
+    source_path = (source or Path.cwd()).resolve()
+    index_path = (index_dir or source_path / ".jedidb").resolve()
+
+    ctx.obj["source"] = source_path
+    ctx.obj["index"] = index_path
 
 
 app.command(name="init", help="Initialize jedidb in a project")(init.init_cmd)
