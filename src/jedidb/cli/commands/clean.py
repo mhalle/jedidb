@@ -7,7 +7,7 @@ import typer
 
 from jedidb import JediDB
 from jedidb.config import Config
-from jedidb.cli.formatters import console, print_success, print_error, print_warning
+from jedidb.cli.formatters import print_success, print_error, print_warning
 
 
 def clean_cmd(
@@ -97,7 +97,7 @@ def clean_cmd(
             if not full_path.exists():
                 jedidb.db.delete_file(file_id)
                 removed += 1
-                console.print(f"[dim]Removed:[/dim] {file_path}")
+                print(f"Removed: {file_path}")
 
         # Re-export to parquet if we removed anything
         if removed > 0:
@@ -108,4 +108,4 @@ def clean_cmd(
         if removed > 0:
             print_success(f"Removed {removed} stale file entries")
         else:
-            console.print("[dim]No stale entries found[/dim]")
+            print("No stale entries found")

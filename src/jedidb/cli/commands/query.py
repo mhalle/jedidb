@@ -8,7 +8,6 @@ import typer
 from jedidb import JediDB
 from jedidb.config import Config
 from jedidb.cli.formatters import (
-    console,
     format_json,
     get_default_format,
     OutputFormat,
@@ -93,12 +92,12 @@ def query_cmd(
     jedidb.close()
 
     if not rows:
-        console.print("[dim]No results[/dim]")
+        print("No results")
         raise typer.Exit(0)
 
     if output_format == OutputFormat.json:
         data = [dict(zip(columns, row)) for row in rows]
-        console.print(format_json(data))
+        print(format_json(data))
 
     elif output_format == OutputFormat.jsonl:
         import json
@@ -107,7 +106,7 @@ def query_cmd(
 
     elif output_format == OutputFormat.csv:
         # Header
-        console.print(",".join(columns))
+        print(",".join(columns))
         # Rows
         for row in rows:
             values = []
@@ -120,18 +119,22 @@ def query_cmd(
                     values.append(val)
                 else:
                     values.append(str(val))
-            console.print(",".join(values))
+            print(",".join(values))
 
     else:
-        # Table format
-        from rich.table import Table
-
-        table = Table(show_header=True, header_style="bold cyan")
-        for col in columns:
-            table.add_column(col)
-
+        # Table format - plain text
+        col_widths = [len(c) for c in columns]
         for row in rows:
-            table.add_row(*[str(v) if v is not None else "" for v in row])
+            for i, val in enumerate(row):
+                col_widths[i] = max(col_widths[i], len(str(val) if val is not None else ""))
 
-        console.print(table)
-        console.print(f"\n[dim]{len(rows)} row(s)[/dim]")
+        # Header
+        header = "  ".join(f"{col:<{col_widths[i]}}" for i, col in enumerate(columns))
+        print(header)
+        print("-" * len(header))
+
+        # Rows
+        for row in rows:
+            print("  ".join(f"{(str(v) if v is not None else ''):<{col_widths[i]}}" for i, v in enumerate(row)))
+
+        print(f"\n{len(rows)} row(s)")

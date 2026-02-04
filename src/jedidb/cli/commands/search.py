@@ -9,7 +9,6 @@ import typer
 from jedidb import JediDB
 from jedidb.config import Config
 from jedidb.cli.formatters import (
-    console,
     format_search_results_table,
     format_json,
     get_default_format,
@@ -124,7 +123,7 @@ def search_cmd(
             }
             for r in results
         ]
-        console.print(format_json(data))
+        print(format_json(data))
     elif output_format == OutputFormat.jsonl:
         import json
         for r in results:
@@ -139,5 +138,5 @@ def search_cmd(
                 "docstring": r.definition.docstring,
             }, separators=(",", ":")))
     else:
-        console.print(format_search_results_table(results))
-        console.print(f"\n[dim]{len(results)} result(s)[/dim]")
+        print(format_search_results_table(results))
+        print(f"\n{len(results)} result(s)")

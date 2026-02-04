@@ -7,7 +7,7 @@ import typer
 
 from jedidb import JediDB
 from jedidb.config import Config
-from jedidb.cli.formatters import console, format_json, print_error, print_success
+from jedidb.cli.formatters import format_json, print_error, print_success
 
 
 def export_cmd(
@@ -144,4 +144,4 @@ def export_cmd(
         output.write_text(content)
         print_success(f"Exported {len(rows)} rows to {output}")
     else:
-        console.print(content)
+        print(content)

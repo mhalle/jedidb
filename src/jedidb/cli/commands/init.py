@@ -1,5 +1,6 @@
 """Init command for JediDB CLI."""
 
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -7,7 +8,7 @@ import typer
 
 from jedidb.config import Config, create_config_file, DEFAULT_DB_DIR
 from jedidb.core.database import Database
-from jedidb.cli.formatters import console, print_success, print_info, print_warning
+from jedidb.cli.formatters import print_success, print_info, print_warning
 
 
 def init_cmd(
@@ -47,7 +48,7 @@ def init_cmd(
     project_path = (path or Path.cwd()).resolve()
 
     if not project_path.exists():
-        console.print(f"[red]Error:[/red] Path does not exist: {project_path}")
+        print(f"Error: Path does not exist: {project_path}", file=sys.stderr)
         raise typer.Exit(1)
 
     # Check for existing configuration
@@ -82,11 +83,11 @@ def init_cmd(
                 f.write("\n# JediDB\n.jedidb/\n")
             print_success("Added .jedidb/ to .gitignore")
 
-    console.print()
+    print()
     print_info("Next steps:")
     if not include and not exclude:
-        console.print("  1. Edit .jedidb.toml to configure include/exclude patterns (optional)")
-        console.print("  2. Run [cyan]jedidb index[/cyan] to index your Python files")
+        print("  1. Edit .jedidb.toml to configure include/exclude patterns (optional)")
+        print("  2. Run 'jedidb index' to index your Python files")
     else:
-        console.print("  1. Run [cyan]jedidb index[/cyan] to index your Python files")
-    console.print(f"  {'3' if not include and not exclude else '2'}. Run [cyan]jedidb search <query>[/cyan] to search definitions")
+        print("  1. Run 'jedidb index' to index your Python files")
+    print(f"  {'3' if not include and not exclude else '2'}. Run 'jedidb search <query>' to search definitions")

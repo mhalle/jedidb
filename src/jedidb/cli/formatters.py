@@ -7,16 +7,8 @@ from pathlib import Path
 from typing import Any
 
 import typer
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich.syntax import Syntax
-from rich.text import Text
 
 from jedidb.core.models import Definition, Reference, SearchResult
-
-
-console = Console()
 
 
 class OutputFormat(str, Enum):
@@ -39,118 +31,101 @@ def get_project_path(ctx: typer.Context) -> Path | None:
     return None
 
 
-def format_definition_table(definitions: list[Definition], show_file: bool = True) -> Table:
-    """Format definitions as a Rich table."""
-    table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("Name", style="green")
-    table.add_column("Type", style="yellow")
+def format_definition_table(definitions: list[Definition], show_file: bool = True) -> str:
+    """Format definitions as a plain text table."""
+    if not definitions:
+        return "No definitions found."
+
+    lines = []
     if show_file:
-        table.add_column("File", style="blue")
-    table.add_column("Line", justify="right")
+        lines.append(f"{'Name':<40} {'Type':<12} {'File':<40} {'Line':>6}")
+        lines.append("-" * 100)
+        for d in definitions:
+            lines.append(f"{d.name:<40} {d.type:<12} {(d.file_path or ''):<40} {d.line:>6}")
+    else:
+        lines.append(f"{'Name':<40} {'Type':<12} {'Line':>6}")
+        lines.append("-" * 60)
+        for d in definitions:
+            lines.append(f"{d.name:<40} {d.type:<12} {d.line:>6}")
 
-    for d in definitions:
-        row = [d.name, d.type]
-        if show_file:
-            row.append(d.file_path or "")
-        row.append(str(d.line))
-        table.add_row(*row)
-
-    return table
+    return "\n".join(lines)
 
 
-def format_search_results_table(results: list[SearchResult]) -> Table:
-    """Format search results as a Rich table."""
-    table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("Name", style="green")
-    table.add_column("Type", style="yellow")
-    table.add_column("File", style="blue")
-    table.add_column("Line", justify="right")
-    table.add_column("Score", justify="right", style="magenta")
+def format_search_results_table(results: list[SearchResult]) -> str:
+    """Format search results as a plain text table."""
+    if not results:
+        return "No results found."
 
+    lines = []
+    lines.append(f"{'Name':<40} {'Type':<12} {'File':<40} {'Line':>6} {'Score':>8}")
+    lines.append("-" * 110)
     for r in results:
-        table.add_row(
-            r.definition.name,
-            r.definition.type,
-            r.definition.file_path or "",
-            str(r.definition.line),
-            f"{r.score:.2f}",
+        lines.append(
+            f"{r.definition.name:<40} {r.definition.type:<12} "
+            f"{(r.definition.file_path or ''):<40} {r.definition.line:>6} {r.score:>8.2f}"
         )
 
-    return table
+    return "\n".join(lines)
 
 
-def format_references_table(references: list[Reference]) -> Table:
-    """Format references as a Rich table."""
-    table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("File", style="blue")
-    table.add_column("Line", justify="right")
-    table.add_column("Context", style="dim")
+def format_references_table(references: list[Reference]) -> str:
+    """Format references as a plain text table."""
+    if not references:
+        return "No references found."
 
+    lines = []
+    lines.append(f"{'File':<50} {'Line':>6}  {'Context'}")
+    lines.append("-" * 100)
     for r in references:
-        table.add_row(
-            r.file_path or "",
-            str(r.line),
-            r.context or "",
-        )
+        lines.append(f"{(r.file_path or ''):<50} {r.line:>6}  {r.context or ''}")
 
-    return table
+    return "\n".join(lines)
 
 
-def format_definition_detail(definition: Definition) -> Panel:
+def format_definition_detail(definition: Definition) -> str:
     """Format a single definition with full details."""
-    content = Text()
+    lines = []
 
     # Name and type
-    content.append(definition.full_name or definition.name, style="bold green")
-    content.append(f" ({definition.type})", style="yellow")
-    content.append("\n\n")
+    lines.append(f"{definition.full_name or definition.name} ({definition.type})")
+    lines.append("")
 
     # Location
-    content.append("Location: ", style="bold")
-    content.append(f"{definition.file_path}:{definition.line}", style="blue")
-    content.append("\n")
+    lines.append(f"Location: {definition.file_path}:{definition.line}")
 
     # Signature
     if definition.signature:
-        content.append("\nSignature: ", style="bold")
-        content.append(definition.signature, style="cyan")
-        content.append("\n")
+        lines.append(f"Signature: {definition.signature}")
 
     # Docstring
     if definition.docstring:
-        content.append("\nDocstring:\n", style="bold")
-        content.append(definition.docstring, style="dim")
+        lines.append("")
+        lines.append("Docstring:")
+        lines.append(definition.docstring)
 
-    return Panel(content, title="Definition", border_style="cyan")
+    return "\n".join(lines)
 
 
-def format_stats(stats: dict[str, Any]) -> Panel:
+def format_stats(stats: dict[str, Any]) -> str:
     """Format database statistics."""
-    content = Text()
+    lines = []
 
-    content.append("Files: ", style="bold")
-    content.append(f"{stats.get('total_files', 0)}\n")
-
-    content.append("Definitions: ", style="bold")
-    content.append(f"{stats.get('total_definitions', 0)}\n")
-
-    content.append("References: ", style="bold")
-    content.append(f"{stats.get('total_references', 0)}\n")
-
-    content.append("Imports: ", style="bold")
-    content.append(f"{stats.get('total_imports', 0)}\n")
+    lines.append(f"Files: {stats.get('total_files', 0)}")
+    lines.append(f"Definitions: {stats.get('total_definitions', 0)}")
+    lines.append(f"References: {stats.get('total_references', 0)}")
+    lines.append(f"Imports: {stats.get('total_imports', 0)}")
 
     if stats.get("definitions_by_type"):
-        content.append("\nDefinitions by type:\n", style="bold")
+        lines.append("")
+        lines.append("Definitions by type:")
         for type_name, count in stats["definitions_by_type"].items():
-            content.append(f"  {type_name}: ", style="yellow")
-            content.append(f"{count}\n")
+            lines.append(f"  {type_name}: {count}")
 
     if stats.get("last_indexed"):
-        content.append("\nLast indexed: ", style="bold")
-        content.append(str(stats["last_indexed"]))
+        lines.append("")
+        lines.append(f"Last indexed: {stats['last_indexed']}")
 
-    return Panel(content, title="Database Statistics", border_style="green")
+    return "\n".join(lines)
 
 
 def format_json(data: Any) -> str:
@@ -175,19 +150,19 @@ def format_csv_row(row: dict[str, Any], columns: list[str]) -> str:
 
 def print_success(message: str):
     """Print a success message."""
-    console.print(f"[green]✓[/green] {message}")
+    print(f"OK: {message}")
 
 
 def print_error(message: str):
     """Print an error message."""
-    console.print(f"[red]✗[/red] {message}")
+    print(f"Error: {message}", file=sys.stderr)
 
 
 def print_warning(message: str):
     """Print a warning message."""
-    console.print(f"[yellow]![/yellow] {message}")
+    print(f"Warning: {message}", file=sys.stderr)
 
 
 def print_info(message: str):
     """Print an info message."""
-    console.print(f"[blue]i[/blue] {message}")
+    print(message)

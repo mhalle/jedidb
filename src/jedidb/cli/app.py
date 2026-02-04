@@ -13,6 +13,8 @@ app = typer.Typer(
     help="Jedi code analyzer with DuckDB storage and full-text search.",
     no_args_is_help=True,
     add_completion=False,
+    rich_markup_mode=None,
+    pretty_exceptions_enable=False,
 )
 
 

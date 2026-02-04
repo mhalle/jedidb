@@ -1,14 +1,14 @@
 """Index command for JediDB CLI."""
 
+import sys
 from pathlib import Path
 from typing import Optional
 
 import typer
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 from jedidb import JediDB
 from jedidb.config import Config
-from jedidb.cli.formatters import console, print_success, print_error, print_info
+from jedidb.cli.formatters import print_success, print_error, print_info
 
 
 def index_cmd(
@@ -92,7 +92,14 @@ def index_cmd(
     all_include = list(include or []) + jedidb.config.include_patterns
     all_exclude = list(exclude or []) + jedidb.config.exclude_patterns
 
-    if not quiet:
+    # Use Rich progress bar only for TTY, otherwise simple text
+    use_progress_bar = not quiet and sys.stderr.isatty()
+
+    if use_progress_bar:
+        from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+        from rich.console import Console
+
+        console = Console(stderr=True)
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -113,6 +120,18 @@ def index_cmd(
                 exclude=all_exclude if all_exclude else None,
                 force=force,
             )
+    elif not quiet:
+        def on_progress(file_path: str, current: int, total: int):
+            print(f"Indexing [{current}/{total}]: {Path(file_path).name}", file=sys.stderr)
+
+        jedidb.indexer.progress_callback = on_progress
+
+        stats = jedidb.index(
+            paths=paths,
+            include=all_include if all_include else None,
+            exclude=all_exclude if all_exclude else None,
+            force=force,
+        )
     else:
         stats = jedidb.index(
             paths=paths,
@@ -124,7 +143,7 @@ def index_cmd(
     jedidb.close()
 
     # Print results
-    console.print()
+    print()
     print_success(f"Indexed {stats['files_indexed']} files")
 
     if stats["files_skipped"] > 0:
@@ -133,18 +152,18 @@ def index_cmd(
     if stats["files_removed"] > 0:
         print_info(f"Removed {stats['files_removed']} deleted files")
 
-    console.print()
-    console.print(f"  Definitions: {stats['definitions_added']}")
-    console.print(f"  References:  {stats['references_added']}")
-    console.print(f"  Imports:     {stats['imports_added']}")
+    print()
+    print(f"  Definitions: {stats['definitions_added']}")
+    print(f"  References:  {stats['references_added']}")
+    print(f"  Imports:     {stats['imports_added']}")
 
     if stats.get("packed"):
-        console.print(f"  Packed:      {stats['parquet_size']:,} bytes")
+        print(f"  Packed:      {stats['parquet_size']:,} bytes")
 
     if stats["errors"]:
-        console.print()
+        print()
         print_error(f"Errors in {len(stats['errors'])} files:")
         for err in stats["errors"][:5]:
-            console.print(f"  [red]{err['file']}[/red]: {err['error']}")
+            print(f"  {err['file']}: {err['error']}", file=sys.stderr)
         if len(stats["errors"]) > 5:
-            console.print(f"  ... and {len(stats['errors']) - 5} more")
+            print(f"  ... and {len(stats['errors']) - 5} more", file=sys.stderr)

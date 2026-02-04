@@ -7,7 +7,7 @@ import typer
 
 from jedidb import JediDB
 from jedidb.config import Config
-from jedidb.cli.formatters import console, format_stats, format_json, print_error
+from jedidb.cli.formatters import format_stats, format_json, print_error
 
 
 def stats_cmd(
@@ -61,6 +61,6 @@ def stats_cmd(
         # Convert datetime to string for JSON
         if stats.get("last_indexed"):
             stats["last_indexed"] = str(stats["last_indexed"])
-        console.print(format_json(stats))
+        print(format_json(stats))
     else:
-        console.print(format_stats(stats))
+        print(format_stats(stats))

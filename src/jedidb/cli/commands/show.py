@@ -8,7 +8,6 @@ import typer
 from jedidb import JediDB
 from jedidb.config import Config
 from jedidb.cli.formatters import (
-    console,
     format_definition_detail,
     format_references_table,
     format_json,
@@ -109,14 +108,14 @@ def show_cmd(
                 }
                 for r in references
             ]
-        console.print(format_json(data))
+        print(format_json(data))
     else:
-        console.print(format_definition_detail(definition))
+        print(format_definition_detail(definition))
 
         if refs:
-            console.print()
+            print()
             if references:
-                console.print(f"[bold]References ({len(references)}):[/bold]")
-                console.print(format_references_table(references))
+                print(f"References ({len(references)}):")
+                print(format_references_table(references))
             else:
                 print_info("No references found")
