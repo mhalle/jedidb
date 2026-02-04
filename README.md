@@ -2,6 +2,22 @@
 
 Python code index with Jedi analysis and full-text search.
 
+## Why JediDB?
+
+Built for **LLM-assisted code exploration**. Unlike embedding-based tools, JediDB uses [Jedi](https://github.com/davidhalter/jedi) for real Python semantic analysis - the same engine that powers IDE autocompletion.
+
+| Feature | JediDB | Embedding tools | Call graph tools |
+|---------|--------|-----------------|------------------|
+| Semantic Python analysis | Yes (Jedi) | Approximations | AST only |
+| Full-text + wildcard search | Yes | Vector similarity | No |
+| Source display with context | Yes | No | No |
+| Call graphs in execution order | Yes | No | Unordered |
+| SQL queries on index | Yes | No | No |
+| Structured JSON output | Auto-detected | Varies | No |
+| No external services | Yes | Often needs Ollama/API | Yes |
+
+**One tool** for search, source viewing, call navigation, and custom SQL queries - all with CLI-friendly JSON output.
+
 ## What Can JediDB Do?
 
 - **Search code** - Full-text search across function names, class names, and docstrings
@@ -20,15 +36,16 @@ jedidb source --help
 
 ## Features
 
-- **Code Analysis**: Extracts definitions, references, imports, and decorators using Jedi
-- **Call Graph**: Optional reference resolution to build caller/callee relationships
-- **Parent Hierarchy**: Track class methods, nested functions, and module-level definitions
-- **Definition Ranges**: End line/column for each definition (enables "large function" queries)
-- **Compact Storage**: Parquet files with zstd compression (~1.5MB for 24K definitions)
+- **Jedi-Powered Analysis**: Real Python semantic analysis - definitions, references, imports, decorators
+- **Call Graphs**: Caller/callee relationships with execution order tracking
+- **Source Display**: View actual source code with line numbers and configurable context
 - **Full-Text Search**: BM25 ranking with CamelCase/snake_case tokenization
-- **Prefix Search**: Find definitions starting with a pattern (e.g., `get*`)
+- **Wildcard Search**: Prefix (`get*`), suffix (`*Engine`), and pattern (`get*path`) matching
+- **SQL Interface**: Query the index directly with DuckDB SQL
+- **LLM-Friendly Output**: Auto-detects terminal vs pipe, outputs JSON/JSONL for tooling
+- **Lightweight Storage**: Parquet files with zstd compression (~1.5MB for 24K definitions)
 - **Incremental Updates**: Only re-indexes changed files
-- **CLI & Library**: Command line tool and Python API
+- **Zero Dependencies**: No cloud services, no Ollama, no API keys
 
 ## Installation
 
