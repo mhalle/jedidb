@@ -78,6 +78,66 @@ def is_python_file(path: Path) -> bool:
     return path.is_file() and path.suffix == ".py"
 
 
+def expand_pattern(pattern: str) -> str:
+    """Expand a simplified pattern to a full glob pattern.
+
+    Simplified patterns:
+    - Plain names (e.g., 'Testing') → '**/Testing/**' (directory anywhere)
+    - Prefix patterns (e.g., 'test_') → '**/test_*.py' (files starting with)
+    - Suffix patterns (e.g., '_test') → '**/*_test.py' (files ending with)
+    - Wildcard patterns (e.g., 'test_*') → '**/test_*.py'
+
+    Patterns with '/' are treated as explicit paths and minimally modified.
+
+    Args:
+        pattern: Simplified or full glob pattern
+
+    Returns:
+        Full glob pattern
+    """
+    # Has path separators - more explicit pattern
+    if "/" in pattern:
+        if pattern.endswith("/"):
+            # Explicit directory - add ** to match contents
+            return pattern + "**"
+        if pattern.endswith(".py"):
+            # Specific file pattern - add **/ prefix if needed
+            if not pattern.startswith("**/") and not pattern.startswith("/"):
+                return "**/" + pattern
+            return pattern
+        if "*" in pattern:
+            # Already has wildcards - use as-is
+            return pattern
+        # Plain path without wildcards - treat as directory
+        return pattern + "/**"
+
+    # No path separators - simple pattern
+
+    # Has wildcards - treat as filename pattern
+    if "*" in pattern:
+        prefix = "**/" if not pattern.startswith("**/") else ""
+        suffix = ".py" if not pattern.endswith(".py") else ""
+        return prefix + pattern + suffix
+
+    # Ends with _ (prefix pattern like 'test_')
+    if pattern.endswith("_"):
+        return f"**/{pattern}*.py"
+
+    # Starts with _ (suffix pattern like '_test')
+    if pattern.startswith("_"):
+        return f"**/*{pattern}.py"
+
+    # Plain name - treat as directory
+    return f"**/{pattern}/**"
+
+
+def expand_patterns(patterns: list[str] | None) -> list[str] | None:
+    """Expand a list of simplified patterns to full glob patterns."""
+    if patterns is None:
+        return None
+    return [expand_pattern(p) for p in patterns]
+
+
 def glob_match(path_str: str, pattern: str) -> bool:
     """Match a path against a glob pattern with proper ** support.
 
@@ -173,8 +233,8 @@ def discover_python_files(
 
     Args:
         root: Root directory to search
-        include: Glob patterns to include
-        exclude: Glob patterns to exclude
+        include: Glob patterns to include (simplified patterns are expanded)
+        exclude: Glob patterns to exclude (simplified patterns are expanded)
 
     Returns:
         List of Python file paths
@@ -182,21 +242,29 @@ def discover_python_files(
     root = root.resolve()
     files = []
 
-    # Default exclude patterns
+    # Expand simplified patterns to full globs
+    expanded_include = expand_patterns(include)
+    expanded_exclude = expand_patterns(exclude)
+
+    # Default exclude patterns (directories commonly excluded)
     default_exclude = [
-        "__pycache__/*",
-        ".*",
-        ".git/*",
-        ".venv/*",
-        "venv/*",
-        "*.egg-info/*",
-        "build/*",
-        "dist/*",
+        "**/__pycache__/**",
+        "**/.git/**",
+        "**/.venv/**",
+        "**/.tox/**",
+        "**/.mypy_cache/**",
+        "**/.pytest_cache/**",
+        "**/.ruff_cache/**",
+        "**/venv/**",
+        "**/node_modules/**",
+        "**/*.egg-info/**",
+        "**/build/**",
+        "**/dist/**",
     ]
-    all_exclude = (exclude or []) + default_exclude
+    all_exclude = (expanded_exclude or []) + default_exclude
 
     for path in root.rglob("*.py"):
-        if match_glob_patterns(path, include, all_exclude, root):
+        if match_glob_patterns(path, expanded_include, all_exclude, root):
             files.append(path)
 
     return sorted(files)
