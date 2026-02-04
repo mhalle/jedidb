@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS refs (
     context TEXT,
     target_full_name TEXT,
     target_module_path TEXT,
-    is_call BOOLEAN DEFAULT FALSE
+    is_call BOOLEAN DEFAULT FALSE,
+    call_order INTEGER DEFAULT 0,
+    call_depth INTEGER DEFAULT 0
 );
 
 -- Imports
@@ -91,7 +93,9 @@ CREATE TABLE IF NOT EXISTS calls (
     file_id INTEGER NOT NULL,
     line INTEGER NOT NULL,
     col INTEGER NOT NULL,
-    context TEXT
+    context TEXT,
+    call_order INTEGER DEFAULT 0,
+    call_depth INTEGER DEFAULT 0
 );
 
 -- Create indexes for faster lookups
@@ -112,6 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_decorators_name ON decorators(name);
 CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(caller_full_name);
 CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls(callee_full_name);
 CREATE INDEX IF NOT EXISTS idx_calls_callee_name ON calls(callee_name);
+CREATE INDEX IF NOT EXISTS idx_calls_caller_order ON calls(caller_full_name, call_order);
 """
 
 FTS_SETUP_SQL = """
@@ -361,15 +366,15 @@ class Database:
 
         data = [
             (r.file_id, r.definition_id, r.name, r.line, r.column, r.context,
-             r.target_full_name, r.target_module_path, r.is_call)
+             r.target_full_name, r.target_module_path, r.is_call, r.call_order, r.call_depth)
             for r in references
         ]
 
         self.conn.executemany(
             """
             INSERT INTO refs (file_id, definition_id, name, line, col, context,
-                              target_full_name, target_module_path, is_call)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              target_full_name, target_module_path, is_call, call_order, call_depth)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             data
         )
@@ -498,7 +503,7 @@ class Database:
         """Build call graph from all call references (resolved and unresolved)."""
         self.execute("DELETE FROM calls")
         self.execute("""
-            INSERT INTO calls (caller_full_name, callee_full_name, callee_name, caller_id, callee_id, file_id, line, col, context)
+            INSERT INTO calls (caller_full_name, callee_full_name, callee_name, caller_id, callee_id, file_id, line, col, context, call_order, call_depth)
             SELECT
                 d.full_name,
                 r.target_full_name,
@@ -508,7 +513,9 @@ class Database:
                 r.file_id,
                 r.line,
                 r.col,
-                r.context
+                r.context,
+                r.call_order,
+                r.call_depth
             FROM refs r
             JOIN definitions d ON r.file_id = d.file_id
                 AND r.line BETWEEN d.line AND COALESCE(d.end_line, 999999)
@@ -576,6 +583,9 @@ class Database:
             max_id = db._conn.execute(f"SELECT COALESCE(MAX(id), 0) FROM {table}").fetchone()[0]
             db._conn.execute(f"CREATE SEQUENCE {table}_id_seq START WITH {max_id + 1}")
             db._conn.execute(f"ALTER TABLE {table} ALTER COLUMN id SET DEFAULT nextval('{table}_id_seq')")
+
+        # Create index for call ordering queries (after ALTER statements to avoid dependency issues)
+        db._conn.execute("CREATE INDEX IF NOT EXISTS idx_calls_caller_order ON calls(caller_full_name, call_order)")
 
         db._fts_initialized = True
         return db

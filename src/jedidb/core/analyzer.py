@@ -1,5 +1,6 @@
 """Jedi-based code analyzer for JediDB."""
 
+import ast
 from pathlib import Path
 from typing import Generator
 
@@ -8,6 +9,66 @@ from jedi.api.classes import Name
 
 from jedidb.core.models import Decorator, Definition, Import, Reference
 from jedidb.utils import get_context_lines, make_search_text
+
+
+class CallOrderVisitor(ast.NodeVisitor):
+    """AST visitor to track call order and depth for call sites."""
+
+    def __init__(self, source_lines: list[str] | None = None):
+        self.call_info: dict[tuple[int, int], tuple[int, int]] = {}  # (line, col) -> (order, depth)
+        self.call_counter = 0
+        self.call_depth = 0
+        self.source_lines = source_lines or []
+
+    def visit_Call(self, node: ast.Call):
+        self.call_depth += 1
+        current_depth = self.call_depth
+
+        # Visit nested calls first (post-order traversal)
+        self.generic_visit(node)
+
+        self.call_counter += 1
+        # Get the position of the function being called
+        # For method calls like obj.method(), we want the position of 'method'
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            # obj.method() or obj.attr.method() - compute position of attribute name
+            # AST gives us col_offset of the whole expression (e.g., 'self' in 'self.execute')
+            # We need to find where the attribute name starts
+            line = func.lineno
+            attr_name = func.attr
+            # Use end_col_offset if available (Python 3.8+), otherwise search in source
+            if hasattr(func, "end_col_offset") and func.end_col_offset is not None:
+                # end_col_offset points to the end of the attribute name
+                attr_col = func.end_col_offset - len(attr_name)
+                self.call_info[(line, attr_col)] = (self.call_counter, current_depth)
+            elif self.source_lines and 0 < line <= len(self.source_lines):
+                # Fallback: find the last dot before the opening paren in the source
+                source_line = self.source_lines[line - 1]
+                # Find the opening paren
+                paren_pos = source_line.find("(", func.col_offset)
+                if paren_pos >= 0:
+                    # Find the last dot before the paren
+                    search_region = source_line[func.col_offset:paren_pos]
+                    last_dot = search_region.rfind(".")
+                    if last_dot >= 0:
+                        attr_col = func.col_offset + last_dot + 1
+                        self.call_info[(line, attr_col)] = (self.call_counter, current_depth)
+                    else:
+                        self.call_info[(line, func.col_offset)] = (self.call_counter, current_depth)
+                else:
+                    self.call_info[(line, func.col_offset)] = (self.call_counter, current_depth)
+            else:
+                self.call_info[(func.lineno, func.col_offset)] = (self.call_counter, current_depth)
+        elif isinstance(func, ast.Name):
+            # simple_func() - use name position
+            self.call_info[(func.lineno, func.col_offset)] = (self.call_counter, current_depth)
+        else:
+            # Other cases (subscript calls, etc.)
+            self.call_info[(node.lineno, node.col_offset)] = (self.call_counter, current_depth)
+
+        self.call_depth -= 1
+        return node
 
 
 class Analyzer:
@@ -223,6 +284,16 @@ class Analyzer:
 
         source_lines = source.splitlines()
 
+        # Build call order/depth map using AST
+        call_info: dict[tuple[int, int], tuple[int, int]] = {}
+        try:
+            tree = ast.parse(source)
+            visitor = CallOrderVisitor(source_lines)
+            visitor.visit(tree)
+            call_info = visitor.call_info
+        except SyntaxError:
+            pass  # If AST parsing fails, we just won't have order/depth info
+
         for name in names:
             try:
                 line = name.line
@@ -264,6 +335,12 @@ class Analyzer:
                         after_name = full_line[after_pos:]
                         is_call = after_name.lstrip().startswith("(")
 
+                # Look up call order and depth from AST analysis
+                call_order = 0
+                call_depth = 0
+                if is_call and (line, column) in call_info:
+                    call_order, call_depth = call_info[(line, column)]
+
                 yield Reference(
                     name=name.name,
                     line=line,
@@ -272,6 +349,8 @@ class Analyzer:
                     target_full_name=target_full_name,
                     target_module_path=target_module_path,
                     is_call=is_call,
+                    call_order=call_order,
+                    call_depth=call_depth,
                 )
             except Exception:
                 continue

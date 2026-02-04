@@ -21,7 +21,6 @@ SELECT * FROM read_parquet(getvariable('parquet_dir') || '/decorators.parquet');
 CREATE OR REPLACE TABLE calls AS
 SELECT * FROM read_parquet(getvariable('parquet_dir') || '/calls.parquet');
 
-
 -- Install and load FTS extension
 INSTALL fts;
 LOAD fts;

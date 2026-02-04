@@ -65,6 +65,8 @@ class Reference:
     target_full_name: str | None = None
     target_module_path: str | None = None
     is_call: bool = False
+    call_order: int = 0  # Execution sequence within function (1, 2, 3...)
+    call_depth: int = 0  # Nesting level (1=top-level, 2=argument to another call)
 
     # Optional joined data
     file_path: str | None = None
