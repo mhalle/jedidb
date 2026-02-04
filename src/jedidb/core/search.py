@@ -250,6 +250,8 @@ class SearchEngine:
     def get_definition(self, name: str) -> Definition | None:
         """Get a definition by name or full name.
 
+        Prefers actual definitions (with bodies) over imports.
+
         Args:
             name: Name or full name of the definition
 
@@ -265,7 +267,9 @@ class SearchEngine:
             FROM definitions d
             JOIN files f ON d.file_id = f.id
             WHERE d.full_name = ? OR d.name = ?
-            ORDER BY CASE WHEN d.full_name = ? THEN 0 ELSE 1 END
+            ORDER BY
+                CASE WHEN d.full_name = ? THEN 0 ELSE 1 END,
+                COALESCE(d.end_line, d.line) - d.line DESC
             LIMIT 1
         """
 

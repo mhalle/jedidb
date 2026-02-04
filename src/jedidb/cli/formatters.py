@@ -169,3 +169,30 @@ def print_warning(message: str):
 def print_info(message: str):
     """Print an info message."""
     print(message)
+
+
+def format_source_block(lines: list[str], start_line: int) -> str:
+    """Format source code with line numbers.
+
+    Args:
+        lines: List of source lines (with or without trailing newlines)
+        start_line: Line number of the first line (1-indexed)
+
+    Returns:
+        Formatted string with line numbers
+    """
+    if not lines:
+        return ""
+
+    # Calculate width needed for line numbers
+    max_line = start_line + len(lines) - 1
+    width = len(str(max_line))
+
+    formatted = []
+    for i, line in enumerate(lines):
+        line_num = start_line + i
+        # Strip trailing newline if present
+        line_content = line.rstrip("\n\r")
+        formatted.append(f"{line_num:>{width}} | {line_content}")
+
+    return "\n".join(formatted)
