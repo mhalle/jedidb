@@ -98,8 +98,8 @@ class Indexer:
             except Exception as e:
                 stats["errors"].append({"file": str(file_path), "error": str(e)})
 
-        # Remove deleted files
-        stats["files_removed"] = self._cleanup_deleted_files(indexed_paths, base_path)
+        # Remove deleted files (and excluded files when force=True)
+        stats["files_removed"] = self._cleanup_deleted_files(indexed_paths, base_path, force)
 
         # Post-processing: populate parent_ids and build call graph
         if stats["files_indexed"] > 0 or stats["files_removed"] > 0:
@@ -228,8 +228,15 @@ class Indexer:
 
         return stats
 
-    def _cleanup_deleted_files(self, indexed_paths: set[str], base_path: Path) -> int:
-        """Remove files from database that no longer exist.
+    def _cleanup_deleted_files(
+        self, indexed_paths: set[str], base_path: Path, force: bool = False
+    ) -> int:
+        """Remove files from database that no longer exist or were excluded.
+
+        Args:
+            indexed_paths: Set of paths that were indexed in this run
+            base_path: Base path for resolving relative paths
+            force: If True, remove all files not in indexed_paths (even if they exist)
 
         Returns:
             Number of files removed
@@ -239,13 +246,12 @@ class Indexer:
         db_paths = {r[0] for r in result}
 
         # Find files that are in DB but not in indexed paths
-        # Only remove if the file is under base_path and no longer exists
         removed = 0
         for db_path in db_paths:
             if db_path not in indexed_paths:
-                # Check if file still exists
                 full_path = base_path / db_path
-                if not full_path.exists():
+                # Remove if file deleted OR if force mode (excluded files)
+                if not full_path.exists() or force:
                     self.db.delete_file_by_path(db_path)
                     removed += 1
 
