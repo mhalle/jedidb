@@ -33,8 +33,8 @@ uv add jedidb
 jedidb init
 jedidb index
 
-# Index with call graph support (slower but enables caller/callee queries)
-jedidb index --resolve-refs
+# Index with call graph disabled (faster, but no caller/callee queries)
+jedidb index --no-resolve-refs
 
 # Search
 jedidb search parse                    # full-text search
@@ -89,14 +89,15 @@ Options:
 jedidb index [OPTIONS] [PATHS]...
 
 Options:
-  -i, --include      PATTERN  Glob patterns to include (e.g., 'src/**/*.py')
-  -e, --exclude      PATTERN  Glob patterns to exclude
-  -f, --force                 Force re-index all files
-  -r, --resolve-refs          Resolve reference targets (enables call graph)
-  -C, --project               Project directory
+  -i, --include               PATTERN  Glob patterns to include (e.g., 'src/**/*.py')
+  -e, --exclude               PATTERN  Glob patterns to exclude
+  -f, --force                          Force re-index all files
+  -r, --resolve-refs (default)         Resolve reference targets (enables call graph)
+  -R, --no-resolve-refs                Skip reference resolution (faster indexing)
+  -C, --project                        Project directory
 ```
 
-The `--resolve-refs` flag uses Jedi's `goto()` to resolve each reference to its target definition. This enables call graph queries but adds ~1 min overhead per 100K references.
+Reference resolution is enabled by default, building the call graph. Use `--no-resolve-refs` / `-R` for faster indexing if you don't need caller/callee queries (~30% faster).
 
 ### Output Format Auto-Detection
 
@@ -113,11 +114,11 @@ from jedidb import JediDB
 
 db = JediDB(path="./myproject")
 
-# Index (basic)
+# Index (includes call graph by default)
 db.index(include=["src/**/*.py"], exclude=["**/test_*.py"])
 
-# Index with reference resolution (enables call graph)
-db = JediDB(path="./myproject", resolve_refs=True)
+# Index without reference resolution (faster, no call graph)
+db = JediDB(path="./myproject", resolve_refs=False)
 db.index()
 
 # Search
@@ -138,7 +139,7 @@ refs = db.references("MyClass")
 # Raw SQL queries
 rows = db.query("SELECT * FROM definitions WHERE type = 'class'")
 
-# Call graph queries (requires resolve_refs=True)
+# Call graph queries (enabled by default)
 rows = db.query("""
     SELECT caller_full_name, callee_full_name
     FROM calls WHERE callee_full_name = 'mymodule.parse'
@@ -167,7 +168,7 @@ Data is stored as compressed parquet files in `.jedidb/`:
 .jedidb/
   definitions.parquet   # functions, classes, variables (with end positions, parent info)
   files.parquet         # indexed files with hashes
-  refs.parquet          # references/usages (with resolved targets if --resolve-refs)
+  refs.parquet          # references/usages (with resolved targets by default)
   imports.parquet       # import statements
   decorators.parquet    # decorators on functions/classes
   calls.parquet         # call graph (built from resolved refs)
@@ -204,8 +205,7 @@ FROM definitions WHERE type = 'function';
 -- files: indexed files with modification tracking
 SELECT path, hash, size, indexed_at FROM files;
 
--- refs: references to names
--- With --resolve-refs: target_full_name, target_module_path, is_call are populated
+-- refs: references to names (target resolution enabled by default)
 SELECT name, line, context, target_full_name, is_call FROM refs;
 
 -- imports: import statements
@@ -215,7 +215,7 @@ SELECT module, name, alias FROM imports;
 SELECT d.full_name, dec.name as decorator
 FROM definitions d JOIN decorators dec ON dec.definition_id = d.id;
 
--- calls: call graph (requires --resolve-refs during indexing)
+-- calls: call graph (populated by default)
 SELECT caller_full_name, callee_full_name, line FROM calls;
 ```
 

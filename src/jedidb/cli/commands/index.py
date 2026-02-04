@@ -58,10 +58,10 @@ def index_cmd(
         help="Suppress progress output",
     ),
     resolve_refs: bool = typer.Option(
-        False,
-        "--resolve-refs",
-        "-r",
-        help="Resolve reference targets (enables call graph)",
+        True,
+        "--resolve-refs/--no-resolve-refs",
+        "-r/-R",
+        help="Resolve reference targets for call graph (default: enabled)",
     ),
 ):
     """Index Python files in the project.

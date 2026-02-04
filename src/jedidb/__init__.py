@@ -20,7 +20,7 @@ from jedidb.config import Config
 class JediDB:
     """Main interface for the JediDB code analyzer."""
 
-    def __init__(self, path: str = ".", db_path: str | None = None, resolve_refs: bool = False):
+    def __init__(self, path: str = ".", db_path: str | None = None, resolve_refs: bool = True):
         """Initialize JediDB for a project.
 
         Args:
