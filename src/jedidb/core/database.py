@@ -84,12 +84,14 @@ CREATE SEQUENCE IF NOT EXISTS calls_id_seq;
 CREATE TABLE IF NOT EXISTS calls (
     id INTEGER PRIMARY KEY DEFAULT nextval('calls_id_seq'),
     caller_full_name TEXT NOT NULL,
-    callee_full_name TEXT NOT NULL,
+    callee_full_name TEXT,
+    callee_name TEXT NOT NULL,
     caller_id INTEGER,
     callee_id INTEGER,
     file_id INTEGER NOT NULL,
     line INTEGER NOT NULL,
-    col INTEGER NOT NULL
+    col INTEGER NOT NULL,
+    context TEXT
 );
 
 -- Create indexes for faster lookups
@@ -109,6 +111,7 @@ CREATE INDEX IF NOT EXISTS idx_decorators_definition_id ON decorators(definition
 CREATE INDEX IF NOT EXISTS idx_decorators_name ON decorators(name);
 CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(caller_full_name);
 CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls(callee_full_name);
+CREATE INDEX IF NOT EXISTS idx_calls_callee_name ON calls(callee_name);
 """
 
 FTS_SETUP_SQL = """
@@ -492,18 +495,26 @@ class Database:
         """)
 
     def build_call_graph(self):
-        """Build call graph from resolved references."""
+        """Build call graph from all call references (resolved and unresolved)."""
         self.execute("DELETE FROM calls")
         self.execute("""
-            INSERT INTO calls (caller_full_name, callee_full_name, caller_id, callee_id, file_id, line, col)
+            INSERT INTO calls (caller_full_name, callee_full_name, callee_name, caller_id, callee_id, file_id, line, col, context)
             SELECT
-                d.full_name, r.target_full_name, d.id, callee.id, r.file_id, r.line, r.col
+                d.full_name,
+                r.target_full_name,
+                r.name,
+                d.id,
+                callee.id,
+                r.file_id,
+                r.line,
+                r.col,
+                r.context
             FROM refs r
             JOIN definitions d ON r.file_id = d.file_id
                 AND r.line BETWEEN d.line AND COALESCE(d.end_line, 999999)
                 AND d.type IN ('function', 'class')
             LEFT JOIN definitions callee ON callee.full_name = r.target_full_name
-            WHERE r.is_call = TRUE AND r.target_full_name IS NOT NULL
+            WHERE r.is_call = TRUE
         """)
 
     # Parquet storage methods
