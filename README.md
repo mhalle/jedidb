@@ -1,6 +1,6 @@
 # JediDB
 
-Python code index with Jedi analysis and full-text search. Stores data as compressed parquet files (~30-40x smaller than SQLite/DuckDB).
+Python code index with Jedi analysis and full-text search.
 
 ## Features
 
