@@ -16,17 +16,34 @@ from jedidb.cli.formatters import (
 )
 
 
+from enum import Enum
+
+
+class DefinitionType(str, Enum):
+    function = "function"
+    class_ = "class"
+    variable = "variable"
+    module = "module"
+    param = "param"
+
+
+class OutputFormat(str, Enum):
+    table = "table"
+    json = "json"
+    jsonl = "jsonl"
+
+
 def search_cmd(
     ctx: typer.Context,
     query: str = typer.Argument(
         ...,
-        help="Search query",
+        help="Search query (use * suffix for prefix search, e.g., 'get*')",
     ),
-    type: Optional[str] = typer.Option(
+    type: Optional[DefinitionType] = typer.Option(
         None,
         "--type",
         "-t",
-        help="Filter by type (function, class, variable, etc.)",
+        help="Filter by definition type",
     ),
     limit: int = typer.Option(
         20,
@@ -40,11 +57,11 @@ def search_cmd(
         "-p",
         help="Include private definitions (starting with _)",
     ),
-    output_format: str = typer.Option(
-        "table",
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.table,
         "--format",
         "-f",
-        help="Output format: table, json",
+        help="Output format",
     ),
     db_path: Optional[Path] = typer.Option(
         None,
@@ -84,7 +101,7 @@ def search_cmd(
 
     results = jedidb.search_engine.search(
         query,
-        type=type,
+        type=type.value if type else None,
         limit=limit,
         include_private=include_private,
     )
@@ -95,7 +112,7 @@ def search_cmd(
         print_info("No results found")
         raise typer.Exit(0)
 
-    if output_format == "json":
+    if output_format == OutputFormat.json:
         data = [
             {
                 "name": r.definition.name,
@@ -110,6 +127,19 @@ def search_cmd(
             for r in results
         ]
         console.print(format_json(data))
+    elif output_format == OutputFormat.jsonl:
+        import json
+        for r in results:
+            print(json.dumps({
+                "name": r.definition.name,
+                "full_name": r.definition.full_name,
+                "type": r.definition.type,
+                "file": r.definition.file_path,
+                "line": r.definition.line,
+                "score": r.score,
+                "signature": r.definition.signature,
+                "docstring": r.definition.docstring,
+            }, separators=(",", ":")))
     else:
         console.print(format_search_results_table(results))
         console.print(f"\n[dim]{len(results)} result(s)[/dim]")
