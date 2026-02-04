@@ -463,5 +463,11 @@ class Database:
         for stmt in statements:
             db._conn.execute(stmt)
 
+        # Create sequences for incremental inserts (must be done after loading data)
+        for table in ["files", "definitions", "refs", "imports"]:
+            max_id = db._conn.execute(f"SELECT COALESCE(MAX(id), 0) FROM {table}").fetchone()[0]
+            db._conn.execute(f"CREATE SEQUENCE {table}_id_seq START WITH {max_id + 1}")
+            db._conn.execute(f"ALTER TABLE {table} ALTER COLUMN id SET DEFAULT nextval('{table}_id_seq')")
+
         db._fts_initialized = True
         return db
