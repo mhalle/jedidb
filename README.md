@@ -2,6 +2,22 @@
 
 Python code index with Jedi analysis and full-text search.
 
+## What Can JediDB Do?
+
+- **Search code** - Full-text search across function names, class names, and docstrings
+- **View source** - Display actual source code for any definition with line numbers
+- **Navigate call graphs** - See what functions call what, in execution order
+- **Find references** - Locate all usages of a function or class
+- **Run SQL queries** - Query the indexed codebase with SQL (DuckDB)
+- **Export data** - Export definitions, references, and calls to JSON/CSV
+
+```bash
+# Get help on any command
+jedidb --help
+jedidb search --help
+jedidb source --help
+```
+
 ## Features
 
 - **Code Analysis**: Extracts definitions, references, imports, and decorators using Jedi
@@ -45,16 +61,20 @@ jedidb search test --format jsonl      # newline-delimited JSON output
 # Explore
 jedidb stats
 jedidb show MyClass
+jedidb source MyClass                  # view source code
 jedidb query "SELECT name, type FROM definitions WHERE type = 'class'"
 
-# Call graph queries (requires --resolve-refs)
+# Call graph (enabled by default)
+jedidb calls MyClass.__init__          # what does this function call?
+jedidb calls MyClass.__init__ --tree   # show as tree
+jedidb source MyClass.__init__ --calls # call sites with source context
 jedidb query "SELECT * FROM calls WHERE callee_full_name LIKE '%parse%'"
 ```
 
 ## CLI Reference
 
 ```
-jedidb [--project DIR] COMMAND
+jedidb [-C DIR] COMMAND
 
 Commands:
   init     Initialize jedidb in a project
@@ -62,6 +82,8 @@ Commands:
   search   Full-text search definitions
   query    Run raw SQL queries
   show     Show details for a definition
+  calls    Show calls from a function in execution order
+  source   Display source code for definitions
   export   Export to JSON/CSV
   stats    Show database statistics
   clean    Remove stale entries or reset database
@@ -98,6 +120,55 @@ Options:
 ```
 
 Reference resolution is enabled by default, building the call graph. Use `--no-resolve-refs` / `-R` for faster indexing if you don't need caller/callee queries (~30% faster).
+
+### calls
+
+```
+jedidb calls [OPTIONS] NAME
+
+Arguments:
+  NAME  Name or full name of the function to show calls for
+
+Options:
+  -d, --depth INTEGER             Recursion depth for call tree [default: 1]
+  -t, --top-level                 Only show top-level calls (not nested as arguments)
+  --tree                          Show calls as a tree
+  -f, --format [table|json|jsonl] Output format (auto-detected)
+```
+
+Show what a function calls in execution order:
+
+```bash
+jedidb calls Model.save              # Direct calls from Model.save
+jedidb calls Model.save --depth 2    # Include calls made by callees
+jedidb calls Model.save --top-level  # Only top-level calls (depth=1)
+jedidb calls Model.save --tree       # Show as indented tree
+```
+
+### source
+
+```
+jedidb source [OPTIONS] NAME
+
+Arguments:
+  NAME  Name or full name of the definition
+
+Options:
+  -c, --context INTEGER           Lines of context around code [default: 2]
+  --calls                         Show call sites with source context
+  -r, --refs                      Show references with source context
+  -f, --format [table|json|jsonl] Output format (auto-detected)
+```
+
+Display actual source code for definitions, call sites, or references:
+
+```bash
+jedidb source search_cmd              # Full function body with line numbers
+jedidb source MyClass                 # Full class body
+jedidb source search_cmd --context 5  # More context lines
+jedidb source search_cmd --calls      # Call sites with source context
+jedidb source search_cmd --refs       # References with source context
+```
 
 ### Output Format Auto-Detection
 

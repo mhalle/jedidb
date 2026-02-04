@@ -43,16 +43,16 @@ def main_callback(
     ctx.obj["index"] = index_path
 
 
-app.command(name="init", help="Initialize jedidb in a project")(init.init_cmd)
-app.command(name="index", help="Index Python files")(index.index_cmd)
-app.command(name="search", help="Full-text search definitions")(search.search_cmd)
-app.command(name="query", help="Run raw SQL queries")(query.query_cmd)
-app.command(name="show", help="Show details for a definition")(show.show_cmd)
-app.command(name="export", help="Export data to JSON or CSV")(export.export_cmd)
-app.command(name="stats", help="Show database statistics")(stats.stats_cmd)
-app.command(name="clean", help="Remove stale entries or reset database")(clean.clean_cmd)
-app.command(name="calls", help="Show calls from a function in execution order")(calls.calls_cmd)
-app.command(name="source", help="Display source code for definitions")(source.source_cmd)
+app.command(name="init")(init.init_cmd)
+app.command(name="index")(index.index_cmd)
+app.command(name="search")(search.search_cmd)
+app.command(name="query")(query.query_cmd)
+app.command(name="show")(show.show_cmd)
+app.command(name="export")(export.export_cmd)
+app.command(name="stats")(stats.stats_cmd)
+app.command(name="clean")(clean.clean_cmd)
+app.command(name="calls")(calls.calls_cmd)
+app.command(name="source")(source.source_cmd)
 
 
 def main():

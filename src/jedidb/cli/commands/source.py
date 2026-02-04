@@ -52,13 +52,23 @@ def source_cmd(
     """Display source code for definitions, call sites, or references.
 
     Shows the actual source code from files using stored line/column information.
+    Output includes line numbers for easy navigation.
 
     Examples:
-        jedidb source search_cmd              # Full function body
-        jedidb source MyClass                 # Full class body
-        jedidb source search_cmd --context 5  # More context lines
-        jedidb source search_cmd --calls      # Call sites with source
-        jedidb source search_cmd --refs       # References with source
+
+        jedidb source search_cmd              # full function body with line numbers
+
+        jedidb source MyClass                 # full class body
+
+        jedidb source parse --context 0       # just the definition, no context
+
+        jedidb source parse --context 10      # 10 lines of context around code
+
+        jedidb source Model.save --calls      # show all call sites with source
+
+        jedidb source MyClass --refs          # show all references with source
+
+        jedidb source parse --format json     # JSON output for tooling
     """
     if output_format is None:
         output_format = get_default_format()

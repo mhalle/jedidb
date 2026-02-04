@@ -36,9 +36,19 @@ def query_cmd(
 ):
     """Execute a raw SQL query against the database.
 
+    Tables: definitions, files, refs, imports, decorators, calls
+
     Examples:
+
         jedidb query "SELECT * FROM definitions WHERE type = 'class'"
-        jedidb query "SELECT name, COUNT(*) FROM definitions GROUP BY name"
+
+        jedidb query "SELECT name FROM definitions WHERE type = 'function'" -n 10
+
+        jedidb query "SELECT caller_full_name FROM calls WHERE callee_full_name = 'mymodule.parse'"
+
+        jedidb query "SELECT full_name, (end_line - line) as size FROM definitions ORDER BY size DESC" -n 20
+
+        jedidb query "DESCRIBE definitions"   # show table schema
     """
     # Resolve output format (table for TTY, jsonl for pipes)
     if output_format is None:

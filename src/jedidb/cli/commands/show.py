@@ -38,6 +38,15 @@ def show_cmd(
     """Show details for a definition.
 
     Display full information including signature, docstring, and optionally references.
+    Use 'jedidb source' to see actual source code.
+
+    Examples:
+
+        jedidb show MyClass              # show signature, docstring, location
+
+        jedidb show parse_config --refs  # also show all references
+
+        jedidb show Model.save -f json   # JSON output for scripting
     """
     source = get_source_path(ctx)
     index = get_index_path(ctx)

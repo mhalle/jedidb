@@ -102,9 +102,16 @@ def calls_cmd(
     Nested calls (like arguments to other calls) have higher call_depth values.
 
     Examples:
-        jedidb calls Model.save           # Direct calls from Model.save
-        jedidb calls Model.save --depth 2 # Include calls made by callees
-        jedidb calls Model.save --top-level  # Only top-level calls (depth=1)
+
+        jedidb calls Model.save              # direct calls from Model.save
+
+        jedidb calls Model.save --depth 2    # include calls made by callees
+
+        jedidb calls Model.save --top-level  # only top-level calls (depth=1)
+
+        jedidb calls __init__ --tree         # show as indented tree
+
+        jedidb calls parse --format json     # JSON output for tooling
     """
     if output_format is None:
         output_format = get_default_format()

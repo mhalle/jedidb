@@ -60,6 +60,19 @@ def search_cmd(
     """Full-text search for definitions.
 
     Search across function names, class names, and docstrings.
+    Supports CamelCase/snake_case aware matching.
+
+    Examples:
+
+        jedidb search parse              # finds parse, parseJSON, parse_config
+
+        jedidb search "get*"             # prefix search: getValue, get_config
+
+        jedidb search Model --type class # only classes
+
+        jedidb search test -p            # include private (_test, __init__)
+
+        jedidb search api --format json  # JSON output for scripting
     """
     # Resolve output format (table for TTY, jsonl for pipes)
     if output_format is None:
