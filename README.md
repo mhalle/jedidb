@@ -255,15 +255,17 @@ Typical sizes:
 
 ## Search Features
 
-**Full-text search** with BM25 ranking:
+**Full-text search** with BM25 ranking (searches names and docstrings):
 ```bash
 jedidb search "parse json"      # finds parseJson, parse_json, JSONParser
 ```
 
-**Prefix search** with `*` suffix:
+**Wildcard search** with `*` (matches name only, not docstrings):
 ```bash
-jedidb search "get*"            # finds get, getattr, getValue, get_config
-jedidb search "MRML*"           # case-insensitive prefix matching
+jedidb search "get*"            # prefix: getValue, get_config
+jedidb search "*Engine"         # suffix: SearchEngine
+jedidb search "get*path"        # pattern: get_source_path, get_index_path
+jedidb search "*_cmd"           # underscore is literal, not wildcard
 ```
 
 **CamelCase/snake_case aware**: Searching `volume` finds `volumeNode`, `crop_volume`, `VolumeRenderer`.

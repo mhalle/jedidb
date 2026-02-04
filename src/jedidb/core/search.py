@@ -25,11 +25,11 @@ class SearchEngine:
     ) -> list[SearchResult]:
         """Search definitions using hybrid search.
 
-        Uses LIKE on search_text for prefix queries (ending with *),
+        Uses LIKE on search_text for wildcard queries (containing *),
         and FTS for phrase/word queries.
 
         Args:
-            query: Search query string (use * suffix for prefix search)
+            query: Search query string (use * for wildcards, e.g., 'get*', '*Parser')
             type: Filter by definition type (function, class, variable, etc.)
             limit: Maximum number of results
             include_private: Include private definitions (starting with _)
@@ -37,9 +37,9 @@ class SearchEngine:
         Returns:
             List of SearchResult objects ordered by relevance
         """
-        # Prefix search: use LIKE on search_text
-        if query.endswith("*"):
-            return self._prefix_search(query[:-1], type, limit, include_private)
+        # Wildcard search: use LIKE on search_text
+        if "*" in query:
+            return self._wildcard_search(query, type, limit, include_private)
 
         # Word/phrase search: try FTS first, fall back to LIKE
         try:
@@ -47,16 +47,43 @@ class SearchEngine:
         except Exception:
             return self._like_search(query, type, limit, include_private)
 
-    def _prefix_search(
+    def _convert_wildcard_pattern(self, pattern: str) -> str:
+        """Convert user wildcard pattern to SQL LIKE pattern.
+
+        - Escapes literal % and _ characters (SQL LIKE wildcards)
+        - Converts * to % (user-friendly wildcard)
+        - Lowercases for case-insensitive matching
+
+        Args:
+            pattern: User search pattern with * wildcards
+
+        Returns:
+            SQL LIKE pattern
+        """
+        # Lowercase for case-insensitive search
+        pattern = pattern.lower()
+        # Escape SQL LIKE special characters (% and _)
+        pattern = pattern.replace("%", r"\%").replace("_", r"\_")
+        # Convert user wildcards (*) to SQL wildcards (%)
+        pattern = pattern.replace("*", "%")
+        return pattern
+
+    def _wildcard_search(
         self,
-        prefix: str,
+        query: str,
         type: str | None,
         limit: int,
         include_private: bool,
     ) -> list[SearchResult]:
-        """Perform prefix search using LIKE on search_text column."""
-        # Lowercase to match search_text format
-        search_term = f"%{prefix.lower()}%"
+        """Perform wildcard search using LIKE on name column.
+
+        Supports * as wildcard: 'get*' (prefix), '*Parser' (suffix), 'get*Value' (pattern).
+        Escapes SQL wildcards (% and _) so they match literally.
+        """
+        search_term = self._convert_wildcard_pattern(query)
+
+        # For ranking, extract the non-wildcard prefix if it exists
+        rank_prefix = query.split("*")[0].lower() if query.split("*")[0] else None
 
         sql = """
             SELECT
@@ -66,9 +93,9 @@ class SearchEngine:
                 f.path
             FROM definitions d
             JOIN files f ON d.file_id = f.id
-            WHERE d.search_text LIKE ?
+            WHERE lower(d.name) LIKE ? ESCAPE '\\'
         """
-        params = [search_term]
+        params: list = [search_term]
 
         if type:
             sql += " AND d.type = ?"
@@ -77,18 +104,22 @@ class SearchEngine:
         if not include_private:
             sql += " AND d.is_public = TRUE"
 
-        # Order by: exact name match first, then prefix match on name, then others
-        sql += """
-            ORDER BY
-                CASE
-                    WHEN lower(d.name) = ? THEN 0
-                    WHEN lower(d.name) LIKE ? THEN 1
-                    ELSE 2
-                END,
-                d.name
-            LIMIT ?
-        """
-        params.extend([prefix.lower(), f"{prefix.lower()}%", limit])
+        # Order by: exact prefix match first, then others
+        if rank_prefix:
+            sql += """
+                ORDER BY
+                    CASE
+                        WHEN lower(d.name) = ? THEN 0
+                        WHEN lower(d.name) LIKE ? ESCAPE '\\' THEN 1
+                        ELSE 2
+                    END,
+                    d.name
+                LIMIT ?
+            """
+            params.extend([rank_prefix, f"{rank_prefix}%", limit])
+        else:
+            sql += " ORDER BY d.name LIMIT ?"
+            params.append(limit)
 
         results = self.db.execute(sql, params).fetchall()
 
@@ -110,7 +141,7 @@ class SearchEngine:
                     is_public=r[12],
                     file_path=r[13],
                 ),
-                score=1.0 if r[2].lower() == prefix.lower() else 0.5,
+                score=1.0 if rank_prefix and r[2].lower() == rank_prefix else 0.5,
             )
             for r in results
         ]
