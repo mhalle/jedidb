@@ -148,12 +148,14 @@ jedidb calls Model.save --tree       # Show as indented tree
 ### source
 
 ```
-jedidb source [OPTIONS] NAME
+jedidb source [OPTIONS] [NAME]
 
 Arguments:
   NAME  Name or full name of the definition
 
 Options:
+  -i, --id INTEGER                Look up definition by database ID
+  -a, --all                       List all matches (including imports)
   -c, --context INTEGER           Lines of context around code [default: 2]
   --calls                         Show call sites with source context
   -r, --refs                      Show references with source context
@@ -165,6 +167,8 @@ Display actual source code for definitions, call sites, or references:
 ```bash
 jedidb source search_cmd              # Full function body with line numbers
 jedidb source MyClass                 # Full class body
+jedidb source --id 42                 # Look up by database ID (from query results)
+jedidb source SearchEngine --all      # List all matches (imports + actual definition)
 jedidb source search_cmd --context 5  # More context lines
 jedidb source search_cmd --calls      # Call sites with source context
 jedidb source search_cmd --refs       # References with source context

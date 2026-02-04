@@ -21,9 +21,21 @@ from jedidb.cli.formatters import (
 
 def source_cmd(
     ctx: typer.Context,
-    name: str = typer.Argument(
-        ...,
+    name: Optional[str] = typer.Argument(
+        None,
         help="Name or full name of the definition",
+    ),
+    id: Optional[int] = typer.Option(
+        None,
+        "--id",
+        "-i",
+        help="Look up definition by database ID",
+    ),
+    all_matches: bool = typer.Option(
+        False,
+        "--all",
+        "-a",
+        help="List all definitions matching name (including imports)",
     ),
     context: int = typer.Option(
         2,
@@ -60,6 +72,10 @@ def source_cmd(
 
         jedidb source MyClass                 # full class body
 
+        jedidb source --id 42                 # look up by database ID
+
+        jedidb source SearchEngine --all      # list all matches (imports + definition)
+
         jedidb source parse --context 0       # just the definition, no context
 
         jedidb source parse --context 10      # 10 lines of context around code
@@ -70,6 +86,10 @@ def source_cmd(
 
         jedidb source parse --format json     # JSON output for tooling
     """
+    if not name and id is None:
+        print_error("Must provide either NAME argument or --id option")
+        raise typer.Exit(1)
+
     if output_format is None:
         output_format = get_default_format()
 
@@ -82,13 +102,29 @@ def source_cmd(
         print_error(f"Failed to open database: {e}")
         raise typer.Exit(1)
 
-    # Find the definition
-    definition = jedidb.search_engine.get_definition(name)
-
-    if not definition:
+    # Handle --all: list all matching definitions
+    if all_matches:
+        if not name:
+            jedidb.close()
+            print_error("--all requires a NAME argument")
+            raise typer.Exit(1)
+        _list_all_definitions(jedidb, name, output_format)
         jedidb.close()
-        print_error(f"Definition not found: {name}")
-        raise typer.Exit(1)
+        raise typer.Exit(0)
+
+    # Find the definition by ID or name
+    if id is not None:
+        definition = jedidb.search_engine.get_definition_by_id(id)
+        if not definition:
+            jedidb.close()
+            print_error(f"Definition not found with ID: {id}")
+            raise typer.Exit(1)
+    else:
+        definition = jedidb.search_engine.get_definition(name)
+        if not definition:
+            jedidb.close()
+            print_error(f"Definition not found: {name}")
+            raise typer.Exit(1)
 
     # Resolve file path
     file_path = _resolve_file_path(definition.file_path, source_root)
@@ -111,6 +147,67 @@ def _resolve_file_path(file_path: str | None, source_root: Path) -> Path | None:
     if path.is_absolute():
         return path
     return source_root / path
+
+
+def _list_all_definitions(jedidb, name: str, output_format: OutputFormat):
+    """List all definitions matching a name (including imports)."""
+    query = """
+        SELECT
+            d.id, d.name, d.full_name, d.type,
+            f.path, d.line, d.end_line,
+            COALESCE(d.end_line, d.line) - d.line as size
+        FROM definitions d
+        JOIN files f ON d.file_id = f.id
+        WHERE d.full_name = ? OR d.name = ?
+        ORDER BY size DESC, f.path
+    """
+    results = jedidb.db.execute(query, (name, name)).fetchall()
+
+    if not results:
+        print_info(f"No definitions found matching: {name}")
+        return
+
+    if output_format == OutputFormat.json:
+        data = [
+            {
+                "id": r[0],
+                "name": r[1],
+                "full_name": r[2],
+                "type": r[3],
+                "file": r[4],
+                "line": r[5],
+                "end_line": r[6],
+                "size": r[7],
+            }
+            for r in results
+        ]
+        print(format_json(data))
+    elif output_format == OutputFormat.jsonl:
+        for r in results:
+            data = {
+                "id": r[0],
+                "name": r[1],
+                "full_name": r[2],
+                "type": r[3],
+                "file": r[4],
+                "line": r[5],
+                "end_line": r[6],
+            }
+            print(json.dumps(data, separators=(",", ":")))
+    else:
+        # Table format
+        print(f"Definitions matching '{name}':")
+        print()
+        print(f"{'ID':>6}  {'Type':<10} {'Lines':>10}  {'File':<50}")
+        print("-" * 80)
+        for r in results:
+            line_range = f"{r[5]}"
+            if r[6] and r[6] != r[5]:
+                line_range += f"-{r[6]}"
+            size_note = "" if r[7] > 0 else " (import)"
+            print(f"{r[0]:>6}  {r[3]:<10} {line_range:>10}  {r[4]:<50}{size_note}")
+        print()
+        print(f"{len(results)} definition(s). Use --id to view source.")
 
 
 def _read_source_lines(
