@@ -502,26 +502,38 @@ class Database:
     def build_call_graph(self):
         """Build call graph from all call references (resolved and unresolved)."""
         self.execute("DELETE FROM calls")
+        # Use window function to pick only the innermost enclosing definition
+        # (smallest line range = most specific caller)
         self.execute("""
             INSERT INTO calls (caller_full_name, callee_full_name, callee_name, caller_id, callee_id, file_id, line, col, context, call_order, call_depth)
             SELECT
-                d.full_name,
-                r.target_full_name,
-                r.name,
-                d.id,
-                callee.id,
-                r.file_id,
-                r.line,
-                r.col,
-                r.context,
-                r.call_order,
-                r.call_depth
-            FROM refs r
-            JOIN definitions d ON r.file_id = d.file_id
-                AND r.line BETWEEN d.line AND COALESCE(d.end_line, 999999)
-                AND d.type IN ('function', 'class')
-            LEFT JOIN definitions callee ON callee.full_name = r.target_full_name
-            WHERE r.is_call = TRUE
+                caller_full_name, target_full_name, name, caller_id, callee_id,
+                file_id, line, col, context, call_order, call_depth
+            FROM (
+                SELECT
+                    d.full_name AS caller_full_name,
+                    r.target_full_name,
+                    r.name,
+                    d.id AS caller_id,
+                    callee.id AS callee_id,
+                    r.file_id,
+                    r.line,
+                    r.col,
+                    r.context,
+                    r.call_order,
+                    r.call_depth,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY r.id
+                        ORDER BY COALESCE(d.end_line, 999999) - d.line ASC
+                    ) AS rn
+                FROM refs r
+                JOIN definitions d ON r.file_id = d.file_id
+                    AND r.line BETWEEN d.line AND COALESCE(d.end_line, 999999)
+                    AND d.type IN ('function', 'class')
+                LEFT JOIN definitions callee ON callee.full_name = r.target_full_name
+                WHERE r.is_call = TRUE
+            ) ranked
+            WHERE rn = 1
         """)
 
     # Parquet storage methods
