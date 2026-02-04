@@ -57,6 +57,12 @@ def index_cmd(
         "-q",
         help="Suppress progress output",
     ),
+    resolve_refs: bool = typer.Option(
+        False,
+        "--resolve-refs",
+        "-r",
+        help="Resolve reference targets (enables call graph)",
+    ),
 ):
     """Index Python files in the project.
 
@@ -73,7 +79,11 @@ def index_cmd(
         project_root = Path.cwd()
 
     try:
-        jedidb = JediDB(path=str(project_root), db_path=str(db_path) if db_path else None)
+        jedidb = JediDB(
+            path=str(project_root),
+            db_path=str(db_path) if db_path else None,
+            resolve_refs=resolve_refs,
+        )
     except Exception as e:
         print_error(f"Failed to initialize database: {e}")
         raise typer.Exit(1)

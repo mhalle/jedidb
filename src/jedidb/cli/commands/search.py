@@ -1,5 +1,6 @@
 """Search command for JediDB CLI."""
 
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -11,12 +12,11 @@ from jedidb.cli.formatters import (
     console,
     format_search_results_table,
     format_json,
+    get_default_format,
+    OutputFormat,
     print_error,
     print_info,
 )
-
-
-from enum import Enum
 
 
 class DefinitionType(str, Enum):
@@ -25,12 +25,6 @@ class DefinitionType(str, Enum):
     variable = "variable"
     module = "module"
     param = "param"
-
-
-class OutputFormat(str, Enum):
-    table = "table"
-    json = "json"
-    jsonl = "jsonl"
 
 
 def search_cmd(
@@ -57,11 +51,11 @@ def search_cmd(
         "-p",
         help="Include private definitions (starting with _)",
     ),
-    output_format: OutputFormat = typer.Option(
-        OutputFormat.table,
+    output_format: Optional[OutputFormat] = typer.Option(
+        None,
         "--format",
         "-f",
-        help="Output format",
+        help="Output format (default: table for terminal, jsonl for pipes)",
     ),
     db_path: Optional[Path] = typer.Option(
         None,
@@ -85,6 +79,10 @@ def search_cmd(
     Search across function names, class names, and docstrings.
     """
     from jedidb.cli.formatters import get_project_path
+
+    # Resolve output format (table for TTY, jsonl for pipes)
+    if output_format is None:
+        output_format = get_default_format()
 
     # Find project root (command -C takes precedence over global -C)
     project_root = project or get_project_path(ctx)

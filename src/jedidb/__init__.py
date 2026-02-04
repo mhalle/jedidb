@@ -11,6 +11,7 @@ from jedidb.core.models import (
     Definition,
     Reference,
     Import,
+    Decorator,
     SearchResult,
 )
 from jedidb.config import Config
@@ -19,15 +20,17 @@ from jedidb.config import Config
 class JediDB:
     """Main interface for the JediDB code analyzer."""
 
-    def __init__(self, path: str = ".", db_path: str | None = None):
+    def __init__(self, path: str = ".", db_path: str | None = None, resolve_refs: bool = False):
         """Initialize JediDB for a project.
 
         Args:
             path: Project root directory
             db_path: Optional custom database path. If None, uses .jedidb/
+            resolve_refs: Whether to resolve reference targets (enables call graph)
         """
         self.config = Config(project_path=path, db_path=db_path)
         self._parquet_dir = self.config.db_path.parent
+        self._resolve_refs = resolve_refs
 
         # Prefer parquet if available, otherwise create new DuckDB
         if (self._parquet_dir / "definitions.parquet").exists():
@@ -36,7 +39,7 @@ class JediDB:
             self.db = Database(self.config.db_path)
 
         self.analyzer = Analyzer(self.config.project_path)
-        self.indexer = Indexer(self.db, self.analyzer)
+        self.indexer = Indexer(self.db, self.analyzer, resolve_refs=resolve_refs)
         self.search_engine = SearchEngine(self.db)
 
     def index(
@@ -158,5 +161,6 @@ __all__ = [
     "Definition",
     "Reference",
     "Import",
+    "Decorator",
     "SearchResult",
 ]

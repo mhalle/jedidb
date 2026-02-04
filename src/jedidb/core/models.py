@@ -37,6 +37,7 @@ class Definition:
     signature: str | None = None
     docstring: str | None = None
     parent_id: int | None = None
+    parent_full_name: str | None = None
     is_public: bool = True
     search_text: str | None = None  # Pre-computed searchable text
 
@@ -61,6 +62,9 @@ class Reference:
     line: int = 0
     column: int = 0
     context: str | None = None
+    target_full_name: str | None = None
+    target_module_path: str | None = None
+    is_call: bool = False
 
     # Optional joined data
     file_path: str | None = None
@@ -108,6 +112,18 @@ class SearchResult:
     @property
     def line(self) -> int:
         return self.definition.line
+
+
+@dataclass
+class Decorator:
+    """Represents a decorator on a function or class."""
+
+    id: int | None = None
+    definition_id: int | None = None
+    name: str = ""
+    full_name: str | None = None
+    arguments: str | None = None
+    line: int = 0
 
 
 @dataclass

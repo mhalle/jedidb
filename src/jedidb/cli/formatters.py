@@ -1,6 +1,8 @@
 """Output formatters for CLI."""
 
 import json
+import sys
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,19 @@ from jedidb.core.models import Definition, Reference, SearchResult
 
 
 console = Console()
+
+
+class OutputFormat(str, Enum):
+    """Output format options."""
+    table = "table"
+    json = "json"
+    jsonl = "jsonl"
+    csv = "csv"
+
+
+def get_default_format() -> OutputFormat:
+    """Return 'table' for interactive terminals, 'jsonl' for pipes/redirects."""
+    return OutputFormat.table if sys.stdout.isatty() else OutputFormat.jsonl
 
 
 def get_project_path(ctx: typer.Context) -> Path | None:

@@ -7,7 +7,13 @@ import typer
 
 from jedidb import JediDB
 from jedidb.config import Config
-from jedidb.cli.formatters import console, format_json, print_error
+from jedidb.cli.formatters import (
+    console,
+    format_json,
+    get_default_format,
+    OutputFormat,
+    print_error,
+)
 
 
 def query_cmd(
@@ -16,11 +22,11 @@ def query_cmd(
         ...,
         help="SQL query to execute",
     ),
-    output_format: str = typer.Option(
-        "table",
+    output_format: Optional[OutputFormat] = typer.Option(
+        None,
         "--format",
         "-f",
-        help="Output format: table, json, csv",
+        help="Output format (default: table for terminal, jsonl for pipes)",
     ),
     limit: Optional[int] = typer.Option(
         None,
@@ -52,6 +58,10 @@ def query_cmd(
         jedidb query "SELECT name, COUNT(*) FROM definitions GROUP BY name"
     """
     from jedidb.cli.formatters import get_project_path
+
+    # Resolve output format (table for TTY, jsonl for pipes)
+    if output_format is None:
+        output_format = get_default_format()
 
     # Find project root (command -C takes precedence over global -C)
     project_root = project or get_project_path(ctx)
@@ -86,11 +96,16 @@ def query_cmd(
         console.print("[dim]No results[/dim]")
         raise typer.Exit(0)
 
-    if output_format == "json":
+    if output_format == OutputFormat.json:
         data = [dict(zip(columns, row)) for row in rows]
         console.print(format_json(data))
 
-    elif output_format == "csv":
+    elif output_format == OutputFormat.jsonl:
+        import json
+        for row in rows:
+            print(json.dumps(dict(zip(columns, row)), separators=(",", ":"), default=str))
+
+    elif output_format == OutputFormat.csv:
         # Header
         console.print(",".join(columns))
         # Rows

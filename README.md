@@ -4,7 +4,10 @@ Python code index with Jedi analysis and full-text search.
 
 ## Features
 
-- **Code Analysis**: Extracts definitions, references, and imports using Jedi
+- **Code Analysis**: Extracts definitions, references, imports, and decorators using Jedi
+- **Call Graph**: Optional reference resolution to build caller/callee relationships
+- **Parent Hierarchy**: Track class methods, nested functions, and module-level definitions
+- **Definition Ranges**: End line/column for each definition (enables "large function" queries)
 - **Compact Storage**: Parquet files with zstd compression (~1.5MB for 24K definitions)
 - **Full-Text Search**: BM25 ranking with CamelCase/snake_case tokenization
 - **Prefix Search**: Find definitions starting with a pattern (e.g., `get*`)
@@ -30,6 +33,9 @@ uv add jedidb
 jedidb init
 jedidb index
 
+# Index with call graph support (slower but enables caller/callee queries)
+jedidb index --resolve-refs
+
 # Search
 jedidb search parse                    # full-text search
 jedidb search "get*"                   # prefix search
@@ -40,6 +46,9 @@ jedidb search test --format jsonl      # newline-delimited JSON output
 jedidb stats
 jedidb show MyClass
 jedidb query "SELECT name, type FROM definitions WHERE type = 'class'"
+
+# Call graph queries (requires --resolve-refs)
+jedidb query "SELECT * FROM calls WHERE callee_full_name LIKE '%parse%'"
 ```
 
 ## CLI Reference
@@ -70,7 +79,7 @@ Options:
   -t, --type    [function|class|variable|module|param]  Filter by type
   -n, --limit   INTEGER                                  Max results [default: 20]
   -p, --private                                          Include private (_) defs
-  -f, --format  [table|json|jsonl]                       Output format
+  -f, --format  [table|json|jsonl|csv]                   Output format (auto-detected)
   -C, --project DIRECTORY                                Project directory
 ```
 
@@ -80,11 +89,22 @@ Options:
 jedidb index [OPTIONS] [PATHS]...
 
 Options:
-  -i, --include  PATTERN  Glob patterns to include (e.g., 'src/**/*.py')
-  -e, --exclude  PATTERN  Glob patterns to exclude
-  -f, --force             Force re-index all files
-  -C, --project           Project directory
+  -i, --include      PATTERN  Glob patterns to include (e.g., 'src/**/*.py')
+  -e, --exclude      PATTERN  Glob patterns to exclude
+  -f, --force                 Force re-index all files
+  -r, --resolve-refs          Resolve reference targets (enables call graph)
+  -C, --project               Project directory
 ```
+
+The `--resolve-refs` flag uses Jedi's `goto()` to resolve each reference to its target definition. This enables call graph queries but adds ~1 min overhead per 100K references.
+
+### Output Format Auto-Detection
+
+Commands with `--format` option auto-detect the best format:
+- **Interactive terminal**: `table` (human-readable)
+- **Piped/redirected**: `jsonl` (full values, easy to parse)
+
+Override with `--format table` or `--format jsonl` as needed.
 
 ## Library Usage
 
@@ -93,8 +113,12 @@ from jedidb import JediDB
 
 db = JediDB(path="./myproject")
 
-# Index
+# Index (basic)
 db.index(include=["src/**/*.py"], exclude=["**/test_*.py"])
+
+# Index with reference resolution (enables call graph)
+db = JediDB(path="./myproject", resolve_refs=True)
+db.index()
 
 # Search
 results = db.search("parse", type="function", limit=10)
@@ -111,8 +135,14 @@ print(defn.signature, defn.docstring)
 # Find references
 refs = db.references("MyClass")
 
-# Raw SQL
+# Raw SQL queries
 rows = db.query("SELECT * FROM definitions WHERE type = 'class'")
+
+# Call graph queries (requires resolve_refs=True)
+rows = db.query("""
+    SELECT caller_full_name, callee_full_name
+    FROM calls WHERE callee_full_name = 'mymodule.parse'
+""")
 
 db.close()
 ```
@@ -135,10 +165,12 @@ Data is stored as compressed parquet files in `.jedidb/`:
 
 ```
 .jedidb/
-  definitions.parquet   # functions, classes, variables
+  definitions.parquet   # functions, classes, variables (with end positions, parent info)
   files.parquet         # indexed files with hashes
-  refs.parquet          # references/usages
+  refs.parquet          # references/usages (with resolved targets if --resolve-refs)
   imports.parquet       # import statements
+  decorators.parquet    # decorators on functions/classes
+  calls.parquet         # call graph (built from resolved refs)
 ```
 
 Typical sizes:
@@ -164,17 +196,60 @@ jedidb search "MRML*"           # case-insensitive prefix matching
 
 ```sql
 -- definitions: functions, classes, variables, params, modules
-SELECT name, full_name, type, line, signature, docstring
+-- Includes end_line/end_column for definition ranges
+-- parent_full_name links nested definitions to their parent
+SELECT name, full_name, type, line, end_line, parent_full_name, signature
 FROM definitions WHERE type = 'function';
 
 -- files: indexed files with modification tracking
 SELECT path, hash, size, indexed_at FROM files;
 
 -- refs: references to names
-SELECT name, line, context FROM refs WHERE name = 'MyClass';
+-- With --resolve-refs: target_full_name, target_module_path, is_call are populated
+SELECT name, line, context, target_full_name, is_call FROM refs;
 
 -- imports: import statements
 SELECT module, name, alias FROM imports;
+
+-- decorators: decorators on functions/classes
+SELECT d.full_name, dec.name as decorator
+FROM definitions d JOIN decorators dec ON dec.definition_id = d.id;
+
+-- calls: call graph (requires --resolve-refs during indexing)
+SELECT caller_full_name, callee_full_name, line FROM calls;
+```
+
+## Example Queries
+
+```sql
+-- Who calls function X?
+SELECT c.caller_full_name, f.path, c.line
+FROM calls c JOIN files f ON c.file_id = f.id
+WHERE c.callee_full_name = 'mymodule.my_function';
+
+-- What does function X call?
+SELECT DISTINCT c.callee_full_name FROM calls c
+WHERE c.caller_full_name = 'mymodule.MyClass.__init__';
+
+-- Methods of a class
+SELECT name, type FROM definitions
+WHERE parent_full_name = 'mymodule.MyClass';
+
+-- Functions with @property decorator
+SELECT d.full_name FROM definitions d
+JOIN decorators dec ON dec.definition_id = d.id
+WHERE dec.name = 'property';
+
+-- Largest functions by line count
+SELECT full_name, (end_line - line) as lines FROM definitions
+WHERE type = 'function' AND end_line IS NOT NULL
+ORDER BY lines DESC LIMIT 20;
+
+-- Unused definitions (no incoming references)
+SELECT d.full_name, d.type, f.path
+FROM definitions d JOIN files f ON d.file_id = f.id
+LEFT JOIN refs r ON r.target_full_name = d.full_name
+WHERE r.id IS NULL AND d.type IN ('function', 'class');
 ```
 
 ## Requirements

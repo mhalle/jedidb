@@ -23,6 +23,7 @@ class Indexer:
         db: Database,
         analyzer: Analyzer,
         progress_callback: Callable[[str, int, int], None] | None = None,
+        resolve_refs: bool = False,
     ):
         """Initialize the indexer.
 
@@ -30,10 +31,12 @@ class Indexer:
             db: Database instance
             analyzer: Analyzer instance
             progress_callback: Optional callback for progress updates (file_path, current, total)
+            resolve_refs: Whether to resolve reference targets (enables call graph)
         """
         self.db = db
         self.analyzer = analyzer
         self.progress_callback = progress_callback
+        self.resolve_refs = resolve_refs
 
     def index(
         self,
@@ -68,6 +71,7 @@ class Indexer:
             "definitions_added": 0,
             "references_added": 0,
             "imports_added": 0,
+            "decorators_added": 0,
             "errors": [],
         }
 
@@ -88,6 +92,7 @@ class Indexer:
                     stats["definitions_added"] += file_stats["definitions"]
                     stats["references_added"] += file_stats["references"]
                     stats["imports_added"] += file_stats["imports"]
+                    stats["decorators_added"] += file_stats["decorators"]
                 else:
                     stats["files_skipped"] += 1
             except Exception as e:
@@ -96,8 +101,20 @@ class Indexer:
         # Remove deleted files
         stats["files_removed"] = self._cleanup_deleted_files(indexed_paths, base_path)
 
-        # Rebuild FTS index after changes
+        # Post-processing: populate parent_ids and build call graph
         if stats["files_indexed"] > 0 or stats["files_removed"] > 0:
+            try:
+                self.db.populate_parent_ids()
+            except Exception:
+                pass
+
+            if self.resolve_refs:
+                try:
+                    self.db.build_call_graph()
+                except Exception:
+                    pass
+
+            # Rebuild FTS index after changes
             try:
                 self.db.create_fts_index()
             except Exception:
@@ -141,6 +158,7 @@ class Indexer:
             "definitions": 0,
             "references": 0,
             "imports": 0,
+            "decorators": 0,
         }
 
         # Check if file needs reindexing
@@ -165,7 +183,9 @@ class Indexer:
         file_id = self.db.insert_file(file_record)
 
         # Analyze file
-        definitions, references, imports = self.analyzer.analyze_file(file_path)
+        definitions, references, imports, decorators = self.analyzer.analyze_file(
+            file_path, resolve_refs=self.resolve_refs
+        )
 
         # Set file_id on all records
         for d in definitions:
@@ -175,8 +195,28 @@ class Indexer:
         for i in imports:
             i.file_id = file_id
 
-        # Insert records
+        # Insert definitions first to get their IDs for decorators
         self.db.insert_definitions_batch(definitions)
+
+        # Link decorators to definitions by matching full_name
+        # Decorators have full_name set to their parent definition's full_name
+        if decorators:
+            result = self.db.execute(
+                "SELECT id, full_name FROM definitions WHERE file_id = ?",
+                (file_id,)
+            ).fetchall()
+            full_name_to_id = {row[1]: row[0] for row in result}
+
+            # Set definition_id on decorators and clear the temporary full_name
+            for dec in decorators:
+                parent_full_name = dec.full_name
+                dec.definition_id = full_name_to_id.get(parent_full_name)
+                dec.full_name = None  # Clear - this was just for linking
+
+            # Only insert decorators that have a valid definition_id
+            valid_decorators = [d for d in decorators if d.definition_id is not None]
+            self.db.insert_decorators_batch(valid_decorators)
+
         self.db.insert_references_batch(references)
         self.db.insert_imports_batch(imports)
 
@@ -184,6 +224,7 @@ class Indexer:
         stats["definitions"] = len(definitions)
         stats["references"] = len(references)
         stats["imports"] = len(imports)
+        stats["decorators"] = len(decorators)
 
         return stats
 

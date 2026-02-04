@@ -7,7 +7,7 @@ from typing import Any
 
 import duckdb
 
-from jedidb.core.models import Definition, FileRecord, Import, Reference
+from jedidb.core.models import Decorator, Definition, FileRecord, Import, Reference
 
 
 SCHEMA_SQL = """
@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS definitions (
     signature TEXT,
     docstring TEXT,
     parent_id INTEGER,
+    parent_full_name TEXT,
     is_public BOOLEAN DEFAULT TRUE,
     search_text TEXT
 );
@@ -50,7 +51,10 @@ CREATE TABLE IF NOT EXISTS refs (
     name TEXT NOT NULL,
     line INTEGER NOT NULL,
     col INTEGER NOT NULL,
-    context TEXT
+    context TEXT,
+    target_full_name TEXT,
+    target_module_path TEXT,
+    is_call BOOLEAN DEFAULT FALSE
 );
 
 -- Imports
@@ -64,16 +68,47 @@ CREATE TABLE IF NOT EXISTS imports (
     line INTEGER NOT NULL
 );
 
+-- Decorators on functions/classes
+CREATE SEQUENCE IF NOT EXISTS decorators_id_seq;
+CREATE TABLE IF NOT EXISTS decorators (
+    id INTEGER PRIMARY KEY DEFAULT nextval('decorators_id_seq'),
+    definition_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    full_name TEXT,
+    arguments TEXT,
+    line INTEGER NOT NULL
+);
+
+-- Call graph (built from resolved references)
+CREATE SEQUENCE IF NOT EXISTS calls_id_seq;
+CREATE TABLE IF NOT EXISTS calls (
+    id INTEGER PRIMARY KEY DEFAULT nextval('calls_id_seq'),
+    caller_full_name TEXT NOT NULL,
+    callee_full_name TEXT NOT NULL,
+    caller_id INTEGER,
+    callee_id INTEGER,
+    file_id INTEGER NOT NULL,
+    line INTEGER NOT NULL,
+    col INTEGER NOT NULL
+);
+
 -- Create indexes for faster lookups
 CREATE INDEX IF NOT EXISTS idx_definitions_name ON definitions(name);
 CREATE INDEX IF NOT EXISTS idx_definitions_full_name ON definitions(full_name);
 CREATE INDEX IF NOT EXISTS idx_definitions_type ON definitions(type);
 CREATE INDEX IF NOT EXISTS idx_definitions_file_id ON definitions(file_id);
+CREATE INDEX IF NOT EXISTS idx_definitions_parent_full_name ON definitions(parent_full_name);
 CREATE INDEX IF NOT EXISTS idx_refs_name ON refs(name);
 CREATE INDEX IF NOT EXISTS idx_refs_file_id ON refs(file_id);
+CREATE INDEX IF NOT EXISTS idx_refs_target_full_name ON refs(target_full_name);
+CREATE INDEX IF NOT EXISTS idx_refs_is_call ON refs(is_call);
 CREATE INDEX IF NOT EXISTS idx_imports_module ON imports(module);
 CREATE INDEX IF NOT EXISTS idx_imports_file_id ON imports(file_id);
 CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
+CREATE INDEX IF NOT EXISTS idx_decorators_definition_id ON decorators(definition_id);
+CREATE INDEX IF NOT EXISTS idx_decorators_name ON decorators(name);
+CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(caller_full_name);
+CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls(callee_full_name);
 """
 
 FTS_SETUP_SQL = """
@@ -208,6 +243,8 @@ class Database:
     def delete_file(self, file_id: int):
         """Delete a file and all related records."""
         # Delete related records first (manual cascade)
+        self.delete_decorators_by_file(file_id)
+        self.execute("DELETE FROM calls WHERE file_id = ?", (file_id,))
         self.execute("DELETE FROM refs WHERE file_id = ?", (file_id,))
         self.execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
         self.execute("DELETE FROM definitions WHERE file_id = ?", (file_id,))
@@ -258,7 +295,7 @@ class Database:
             (
                 d.file_id, d.name, d.full_name, d.type, d.line, d.column,
                 d.end_line, d.end_column, d.signature, d.docstring,
-                d.parent_id, d.is_public, d.search_text
+                d.parent_id, d.parent_full_name, d.is_public, d.search_text
             )
             for d in definitions
         ]
@@ -267,8 +304,8 @@ class Database:
             """
             INSERT INTO definitions
             (file_id, name, full_name, type, line, col, end_line, end_col,
-             signature, docstring, parent_id, is_public, search_text)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             signature, docstring, parent_id, parent_full_name, is_public, search_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             data
         )
@@ -320,14 +357,16 @@ class Database:
             return
 
         data = [
-            (r.file_id, r.definition_id, r.name, r.line, r.column, r.context)
+            (r.file_id, r.definition_id, r.name, r.line, r.column, r.context,
+             r.target_full_name, r.target_module_path, r.is_call)
             for r in references
         ]
 
         self.conn.executemany(
             """
-            INSERT INTO refs (file_id, definition_id, name, line, col, context)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO refs (file_id, definition_id, name, line, col, context,
+                              target_full_name, target_module_path, is_call)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             data
         )
@@ -409,6 +448,64 @@ class Database:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
+    # Decorator operations
+
+    def insert_decorators_batch(self, decorators: list[Decorator]):
+        """Insert multiple decorators in a batch."""
+        if not decorators:
+            return
+
+        data = [
+            (d.definition_id, d.name, d.full_name, d.arguments, d.line)
+            for d in decorators
+        ]
+
+        self.conn.executemany(
+            """
+            INSERT INTO decorators (definition_id, name, full_name, arguments, line)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            data
+        )
+
+    def delete_decorators_by_file(self, file_id: int):
+        """Delete decorators for definitions in a file."""
+        self.execute(
+            """
+            DELETE FROM decorators WHERE definition_id IN (
+                SELECT id FROM definitions WHERE file_id = ?
+            )
+            """,
+            (file_id,)
+        )
+
+    # Post-processing methods
+
+    def populate_parent_ids(self):
+        """Populate parent_id from parent_full_name."""
+        self.execute("""
+            UPDATE definitions d SET parent_id = (
+                SELECT p.id FROM definitions p
+                WHERE p.full_name = d.parent_full_name AND p.file_id = d.file_id
+                LIMIT 1
+            ) WHERE d.parent_full_name IS NOT NULL
+        """)
+
+    def build_call_graph(self):
+        """Build call graph from resolved references."""
+        self.execute("DELETE FROM calls")
+        self.execute("""
+            INSERT INTO calls (caller_full_name, callee_full_name, caller_id, callee_id, file_id, line, col)
+            SELECT
+                d.full_name, r.target_full_name, d.id, callee.id, r.file_id, r.line, r.col
+            FROM refs r
+            JOIN definitions d ON r.file_id = d.file_id
+                AND r.line BETWEEN d.line AND COALESCE(d.end_line, 999999)
+                AND d.type IN ('function', 'class')
+            LEFT JOIN definitions callee ON callee.full_name = r.target_full_name
+            WHERE r.is_call = TRUE AND r.target_full_name IS NOT NULL
+        """)
+
     # Parquet storage methods
 
     def export_to_parquet(self, output_dir: Path, compression_level: int = 19):
@@ -421,7 +518,7 @@ class Database:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        tables = ["files", "definitions", "refs", "imports"]
+        tables = ["files", "definitions", "refs", "imports", "decorators", "calls"]
         for table in tables:
             self.execute(f"""
                 COPY {table} TO '{output_dir / f"{table}.parquet"}'
@@ -464,7 +561,7 @@ class Database:
             db._conn.execute(stmt)
 
         # Create sequences for incremental inserts (must be done after loading data)
-        for table in ["files", "definitions", "refs", "imports"]:
+        for table in ["files", "definitions", "refs", "imports", "decorators", "calls"]:
             max_id = db._conn.execute(f"SELECT COALESCE(MAX(id), 0) FROM {table}").fetchone()[0]
             db._conn.execute(f"CREATE SEQUENCE {table}_id_seq START WITH {max_id + 1}")
             db._conn.execute(f"ALTER TABLE {table} ALTER COLUMN id SET DEFAULT nextval('{table}_id_seq')")

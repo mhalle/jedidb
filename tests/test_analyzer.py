@@ -10,7 +10,7 @@ class TestAnalyzer:
 
     def test_analyze_file(self, sample_python_file, analyzer):
         """Test analyzing a Python file."""
-        definitions, references, imports = analyzer.analyze_file(sample_python_file)
+        definitions, references, imports, decorators = analyzer.analyze_file(sample_python_file)
 
         assert len(definitions) > 0
 
@@ -22,7 +22,7 @@ class TestAnalyzer:
 
     def test_definition_types(self, sample_python_file, analyzer):
         """Test that definitions have correct types."""
-        definitions, _, _ = analyzer.analyze_file(sample_python_file)
+        definitions, _, _, _ = analyzer.analyze_file(sample_python_file)
 
         def_by_name = {d.name: d for d in definitions}
 
@@ -32,7 +32,7 @@ class TestAnalyzer:
 
     def test_definition_docstrings(self, sample_python_file, analyzer):
         """Test that docstrings are extracted."""
-        definitions, _, _ = analyzer.analyze_file(sample_python_file)
+        definitions, _, _, _ = analyzer.analyze_file(sample_python_file)
 
         def_by_name = {d.name: d for d in definitions}
 
@@ -44,7 +44,7 @@ class TestAnalyzer:
 
     def test_definition_line_numbers(self, sample_python_file, analyzer):
         """Test that line numbers are correct."""
-        definitions, _, _ = analyzer.analyze_file(sample_python_file)
+        definitions, _, _, _ = analyzer.analyze_file(sample_python_file)
 
         def_by_name = {d.name: d for d in definitions}
 
@@ -54,7 +54,7 @@ class TestAnalyzer:
 
     def test_private_definitions(self, sample_python_file, analyzer):
         """Test detection of private definitions."""
-        definitions, _, _ = analyzer.analyze_file(sample_python_file)
+        definitions, _, _, _ = analyzer.analyze_file(sample_python_file)
 
         def_by_name = {d.name: d for d in definitions}
 
@@ -64,7 +64,7 @@ class TestAnalyzer:
 
     def test_references(self, sample_python_file, analyzer):
         """Test reference extraction."""
-        _, references, _ = analyzer.analyze_file(sample_python_file)
+        _, references, _, _ = analyzer.analyze_file(sample_python_file)
 
         ref_names = [r.name for r in references]
 
@@ -83,7 +83,7 @@ class TestAnalyzer:
 
         # Should either return empty results or raise an error
         try:
-            definitions, _, _ = analyzer.analyze_file(bad_file)
+            definitions, _, _, _ = analyzer.analyze_file(bad_file)
             # If it doesn't raise, it should return something reasonable
             assert isinstance(definitions, list)
         except ValueError:
