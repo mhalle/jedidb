@@ -1,8 +1,12 @@
 [project]
 name = "jedidb"
 version = "0.1.0"
-description = "Jedi code analyzer with DuckDB storage and full-text search"
+description = "Python code index with Jedi analysis and full-text search"
 readme = "README.md"
+license = "Apache-2.0"
+authors = [
+    { name = "Michael Halle" }
+]
 requires-python = ">=3.12"
 dependencies = [
     "jedi>=0.19.0",

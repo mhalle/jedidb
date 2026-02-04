@@ -185,6 +185,10 @@ SELECT module, name, alias FROM imports;
 - typer >= 0.12.0
 - rich >= 13.0.0
 
+## Credits
+
+Built on [Jedi](https://github.com/davidhalter/jedi), the excellent Python static analysis library.
+
 ## License
 
-MIT
+Apache-2.0
