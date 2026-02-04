@@ -24,10 +24,17 @@ class JediDB:
 
         Args:
             path: Project root directory
-            db_path: Optional custom database path. If None, uses .jedidb/jedidb.duckdb
+            db_path: Optional custom database path. If None, uses .jedidb/
         """
         self.config = Config(project_path=path, db_path=db_path)
-        self.db = Database(self.config.db_path)
+        self._parquet_dir = self.config.db_path.parent
+
+        # Prefer parquet if available, otherwise create new DuckDB
+        if (self._parquet_dir / "definitions.parquet").exists():
+            self.db = Database.open_parquet(self._parquet_dir)
+        else:
+            self.db = Database(self.config.db_path)
+
         self.analyzer = Analyzer(self.config.project_path)
         self.indexer = Indexer(self.db, self.analyzer)
         self.search_engine = SearchEngine(self.db)
@@ -50,12 +57,24 @@ class JediDB:
         Returns:
             Dictionary with indexing statistics
         """
-        return self.indexer.index(
+        stats = self.indexer.index(
             paths=paths,
             include=include,
             exclude=exclude,
             force=force,
         )
+
+        # Always export to parquet (this is now the primary storage format)
+        if stats["files_indexed"] > 0 or stats["files_removed"] > 0:
+            self.db.export_to_parquet(self._parquet_dir)
+            stats["packed"] = True
+            stats["parquet_size"] = sum(
+                f.stat().st_size
+                for f in self._parquet_dir.iterdir()
+                if f.suffix == ".parquet"
+            )
+
+        return stats
 
     def search(
         self,

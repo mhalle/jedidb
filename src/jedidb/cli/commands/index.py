@@ -61,6 +61,7 @@ def index_cmd(
     """Index Python files in the project.
 
     Only changed files are re-indexed unless --force is used.
+    Data is stored as compressed parquet files (~30-40x smaller than DuckDB).
     """
     from jedidb.cli.formatters import get_project_path
 
@@ -126,6 +127,9 @@ def index_cmd(
     console.print(f"  Definitions: {stats['definitions_added']}")
     console.print(f"  References:  {stats['references_added']}")
     console.print(f"  Imports:     {stats['imports_added']}")
+
+    if stats.get("packed"):
+        console.print(f"  Packed:      {stats['parquet_size']:,} bytes")
 
     if stats["errors"]:
         console.print()

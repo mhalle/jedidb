@@ -7,7 +7,7 @@ import jedi
 from jedi.api.classes import Name
 
 from jedidb.core.models import Definition, Import, Reference
-from jedidb.utils import get_context_lines
+from jedidb.utils import get_context_lines, make_search_text
 
 
 class Analyzer:
@@ -108,6 +108,9 @@ class Analyzer:
             if not full_name:
                 full_name = name.name
 
+            # Compute search text for FTS
+            search_text = make_search_text(name.name, full_name, docstring)
+
             return Definition(
                 name=name.name,
                 full_name=full_name,
@@ -117,6 +120,7 @@ class Analyzer:
                 signature=signature,
                 docstring=docstring,
                 is_public=not name.name.startswith("_"),
+                search_text=search_text,
             )
         except Exception:
             return None

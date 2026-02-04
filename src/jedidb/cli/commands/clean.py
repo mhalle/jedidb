@@ -79,6 +79,10 @@ def clean_cmd(
         jedidb.db.execute("DELETE FROM imports")
         jedidb.db.execute("DELETE FROM definitions")
         jedidb.db.execute("DELETE FROM files")
+
+        # Re-export to parquet (so next open gets empty database)
+        jedidb.db.export_to_parquet(jedidb._parquet_dir)
+
         jedidb.close()
         print_success("Database reset successfully")
         return
@@ -94,6 +98,10 @@ def clean_cmd(
                 jedidb.db.delete_file(file_id)
                 removed += 1
                 console.print(f"[dim]Removed:[/dim] {file_path}")
+
+        # Re-export to parquet if we removed anything
+        if removed > 0:
+            jedidb.db.export_to_parquet(jedidb._parquet_dir)
 
         jedidb.close()
 

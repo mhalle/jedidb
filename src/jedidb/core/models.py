@@ -38,6 +38,7 @@ class Definition:
     docstring: str | None = None
     parent_id: int | None = None
     is_public: bool = True
+    search_text: str | None = None  # Pre-computed searchable text
 
     # Optional joined data
     file_path: str | None = None

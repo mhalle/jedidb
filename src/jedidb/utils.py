@@ -223,3 +223,62 @@ def get_context_lines(file_path: Path, line: int, context: int = 1) -> str:
         return "".join(lines[start:end]).rstrip()
     except Exception:
         return ""
+
+
+def split_identifier(name: str) -> str:
+    """Split an identifier into searchable tokens.
+
+    Handles camelCase, PascalCase, snake_case, and kebab-case.
+
+    Args:
+        name: Identifier to split
+
+    Returns:
+        Space-separated lowercase tokens
+    """
+    # Insert space between lowercase and uppercase (camelCase)
+    s = re.sub(r"([a-z])([A-Z])", r"\1 \2", name)
+    # Insert space between consecutive caps and cap+lowercase (XMLParser -> XML Parser)
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", s)
+    # Replace underscores and hyphens with spaces
+    s = s.replace("_", " ").replace("-", " ")
+    # Normalize whitespace and lowercase
+    return " ".join(s.lower().split())
+
+
+def make_search_text(
+    name: str,
+    full_name: str | None = None,
+    docstring: str | None = None,
+) -> str:
+    """Create searchable text from definition components.
+
+    Includes both original identifiers (for prefix search) and split tokens
+    (for word-based search).
+
+    Args:
+        name: Definition name
+        full_name: Full qualified name
+        docstring: Documentation string
+
+    Returns:
+        Combined search text
+    """
+    parts = []
+
+    # Original name (lowercased) - enables prefix LIKE search
+    parts.append(name.lower())
+    # Split name - enables word-based FTS search
+    parts.append(split_identifier(name))
+
+    if full_name:
+        # Original full_name with dots replaced by spaces
+        parts.append(full_name.lower().replace(".", " "))
+        # Split full_name
+        parts.append(split_identifier(full_name.replace(".", " ")))
+
+    if docstring:
+        # Docstring as-is (lowercased)
+        parts.append(docstring.lower())
+
+    return " ".join(parts)

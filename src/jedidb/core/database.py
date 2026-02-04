@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS definitions (
     signature TEXT,
     docstring TEXT,
     parent_id INTEGER,
-    is_public BOOLEAN DEFAULT TRUE
+    is_public BOOLEAN DEFAULT TRUE,
+    search_text TEXT
 );
 
 -- References (usages of definitions)
@@ -121,7 +122,7 @@ class Database:
             self._fts_initialized = True
 
     def create_fts_index(self):
-        """Create or recreate the FTS index on definitions."""
+        """Create or recreate the FTS index on definitions.search_text."""
         self._init_fts()
 
         # Drop existing FTS index if it exists
@@ -130,9 +131,10 @@ class Database:
         except Exception:
             pass  # Index might not exist
 
-        # Create new FTS index
+        # Create new FTS index on search_text (contains original + split tokens + docstring)
+        # No stemming or stopwords to preserve code identifiers exactly
         self.conn.execute(
-            "PRAGMA create_fts_index('definitions', 'id', 'name', 'full_name', 'docstring', overwrite=1)"
+            "PRAGMA create_fts_index('definitions', 'id', 'search_text', stemmer='none', stopwords='none', overwrite=1)"
         )
 
     def execute(self, sql: str, params: tuple | list | None = None) -> duckdb.DuckDBPyRelation:
@@ -256,7 +258,7 @@ class Database:
             (
                 d.file_id, d.name, d.full_name, d.type, d.line, d.column,
                 d.end_line, d.end_column, d.signature, d.docstring,
-                d.parent_id, d.is_public
+                d.parent_id, d.is_public, d.search_text
             )
             for d in definitions
         ]
@@ -265,8 +267,8 @@ class Database:
             """
             INSERT INTO definitions
             (file_id, name, full_name, type, line, col, end_line, end_col,
-             signature, docstring, parent_id, is_public)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             signature, docstring, parent_id, is_public, search_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             data
         )
@@ -406,3 +408,60 @@ class Database:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+    # Parquet storage methods
+
+    def export_to_parquet(self, output_dir: Path, compression_level: int = 19):
+        """Export all tables to parquet files with zstd compression.
+
+        Args:
+            output_dir: Directory to write parquet files
+            compression_level: Zstd compression level (1-22, default 19)
+        """
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        tables = ["files", "definitions", "refs", "imports"]
+        for table in tables:
+            self.execute(f"""
+                COPY {table} TO '{output_dir / f"{table}.parquet"}'
+                (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL {compression_level})
+            """)
+
+    @classmethod
+    def open_parquet(cls, parquet_dir: Path) -> "Database":
+        """Open a parquet-backed database (in-memory with tables from parquet files).
+
+        Args:
+            parquet_dir: Directory containing parquet files
+
+        Returns:
+            Database instance with tables loaded from parquet files
+        """
+        import re
+        from importlib.resources import files
+
+        parquet_dir = Path(parquet_dir).resolve()
+
+        # Create in-memory database
+        db = cls.__new__(cls)
+        db.db_path = parquet_dir / "jedidb.duckdb"  # For reference only
+        db._conn = duckdb.connect(":memory:")
+        db._fts_initialized = False
+
+        # Set the parquet directory variable
+        db._conn.execute(f"SET variable parquet_dir = '{parquet_dir}'")
+
+        # Load init.sql from package
+        init_sql = files("jedidb").joinpath("init.sql").read_text()
+
+        # DuckDB execute() only runs one statement at a time
+        # Remove comments and split on semicolons
+        sql_no_comments = re.sub(r"--.*$", "", init_sql, flags=re.MULTILINE)
+        statements = [s.strip() for s in sql_no_comments.split(";") if s.strip()]
+
+        for stmt in statements:
+            db._conn.execute(stmt)
+
+        db._fts_initialized = True
+        return db
