@@ -50,14 +50,23 @@ jedidb source --help
 
 ## Installation
 
+Run directly with uvx (no install needed):
+
 ```bash
-pip install jedidb
+uvx git+https://github.com/mhalle/jedidb jedidb --help
 ```
 
-Or with uv:
+Install as a tool with uv:
 
 ```bash
-uv add jedidb
+uv tool install git+https://github.com/mhalle/jedidb
+jedidb --help
+```
+
+Or with pip:
+
+```bash
+pip install jedidb
 ```
 
 ## Quick Start
