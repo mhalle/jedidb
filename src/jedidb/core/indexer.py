@@ -5,7 +5,7 @@ from typing import Callable
 
 from jedidb.core.analyzer import Analyzer
 from jedidb.core.database import Database
-from jedidb.core.models import Definition, FileRecord, Import, Reference
+from jedidb.core.models import ClassBase, Definition, FileRecord, Import, Reference
 from jedidb.utils import (
     compute_file_hash,
     discover_python_files,
@@ -72,6 +72,7 @@ class Indexer:
             "references_added": 0,
             "imports_added": 0,
             "decorators_added": 0,
+            "class_bases_added": 0,
             "errors": [],
         }
 
@@ -93,6 +94,7 @@ class Indexer:
                     stats["references_added"] += file_stats["references"]
                     stats["imports_added"] += file_stats["imports"]
                     stats["decorators_added"] += file_stats["decorators"]
+                    stats["class_bases_added"] += file_stats["class_bases"]
                 else:
                     stats["files_skipped"] += 1
             except Exception as e:
@@ -159,6 +161,7 @@ class Indexer:
             "references": 0,
             "imports": 0,
             "decorators": 0,
+            "class_bases": 0,
         }
 
         # Check if file needs reindexing
@@ -183,7 +186,7 @@ class Indexer:
         file_id = self.db.insert_file(file_record)
 
         # Analyze file
-        definitions, references, imports, decorators = self.analyzer.analyze_file(
+        definitions, references, imports, decorators, class_bases = self.analyzer.analyze_file(
             file_path, resolve_refs=self.resolve_refs
         )
 
@@ -198,9 +201,9 @@ class Indexer:
         # Insert definitions first to get their IDs for decorators
         self.db.insert_definitions_batch(definitions)
 
-        # Link decorators to definitions by matching full_name
-        # Decorators have full_name set to their parent definition's full_name
-        if decorators:
+        # Link decorators and class_bases to definitions by matching full_name
+        # Build a mapping of full_name -> id for all definitions in this file
+        if decorators or class_bases:
             result = self.db.execute(
                 "SELECT id, full_name FROM definitions WHERE file_id = ?",
                 (file_id,)
@@ -208,14 +211,28 @@ class Indexer:
             full_name_to_id = {row[1]: row[0] for row in result}
 
             # Set definition_id on decorators and clear the temporary full_name
-            for dec in decorators:
-                parent_full_name = dec.full_name
-                dec.definition_id = full_name_to_id.get(parent_full_name)
-                dec.full_name = None  # Clear - this was just for linking
+            if decorators:
+                for dec in decorators:
+                    parent_full_name = dec.full_name
+                    dec.definition_id = full_name_to_id.get(parent_full_name)
+                    dec.full_name = None  # Clear - this was just for linking
 
-            # Only insert decorators that have a valid definition_id
-            valid_decorators = [d for d in decorators if d.definition_id is not None]
-            self.db.insert_decorators_batch(valid_decorators)
+                # Only insert decorators that have a valid definition_id
+                valid_decorators = [d for d in decorators if d.definition_id is not None]
+                self.db.insert_decorators_batch(valid_decorators)
+
+            # Link class_bases to class definitions
+            if class_bases:
+                for cb in class_bases:
+                    cb.class_id = full_name_to_id.get(cb.class_full_name)
+                    # Optionally resolve base_id if base is in our index
+                    if cb.base_full_name:
+                        cb.base_id = full_name_to_id.get(cb.base_full_name)
+                    cb.class_full_name = None  # Clear temp field
+
+                # Only insert class_bases that have a valid class_id
+                valid_class_bases = [cb for cb in class_bases if cb.class_id is not None]
+                self.db.insert_class_bases_batch(valid_class_bases)
 
         self.db.insert_references_batch(references)
         self.db.insert_imports_batch(imports)
@@ -225,6 +242,7 @@ class Indexer:
         stats["references"] = len(references)
         stats["imports"] = len(imports)
         stats["decorators"] = len(decorators)
+        stats["class_bases"] = len(class_bases)
 
         return stats
 

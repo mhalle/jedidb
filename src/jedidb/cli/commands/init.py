@@ -15,10 +15,42 @@ def init_cmd(
         "-f",
         help="Overwrite existing configuration",
     ),
+    include: list[str] = typer.Option(
+        None,
+        "--include",
+        "-i",
+        help="Patterns to include (e.g., 'src/' or 'mymodule')",
+    ),
+    exclude: list[str] = typer.Option(
+        None,
+        "--exclude",
+        "-e",
+        help="Patterns to exclude (e.g., 'Testing' or 'test_')",
+    ),
 ):
     """Initialize jedidb in a project.
 
     Creates a .jedidb directory with config.toml and db/ subdirectory.
+
+    Pattern syntax (patterns are expanded automatically):
+
+        Testing     → **/Testing/**     Directory named 'Testing' anywhere
+
+        test_       → **/test_*.py      Files starting with 'test_'
+
+        _test       → **/*_test.py      Files ending with '_test'
+
+        **/test*    → **/test*          Explicit glob (unchanged)
+
+        src/        → src/**            Everything under src/
+
+    Examples:
+
+        jedidb init                              # Basic init
+
+        jedidb init -e Testing -e test_          # Exclude Testing/ dirs and test_* files
+
+        jedidb init -i src/ -e test_             # Only src/, excluding test_* files
     """
     source = get_source_path(ctx)
     index = get_index_path(ctx)
@@ -40,9 +72,24 @@ def init_cmd(
     (index / "db").mkdir(exist_ok=True)
     print_success(f"Created index directory: {index}")
 
-    # Create default config file
+    # Create config file
     if not config_file.exists() or force:
-        config_file.write_text('# JediDB Configuration\n\n# include = ["**/*.py"]\n# exclude = ["**/test_*.py"]\n')
+        config_lines = ["# JediDB Configuration", ""]
+
+        if include:
+            include_str = ", ".join(f'"{p}"' for p in include)
+            config_lines.append(f"include = [{include_str}]")
+        else:
+            config_lines.append('# include = ["**/*.py"]')
+
+        if exclude:
+            exclude_str = ", ".join(f'"{p}"' for p in exclude)
+            config_lines.append(f"exclude = [{exclude_str}]")
+        else:
+            config_lines.append('# exclude = ["**/test_*.py"]')
+
+        config_lines.append("")
+        config_file.write_text("\n".join(config_lines))
         print_success(f"Created configuration: {config_file}")
 
     # Add .jedidb to .gitignore if it exists and index is inside source
@@ -60,6 +107,10 @@ def init_cmd(
 
     print()
     print_info("Next steps:")
-    print("  1. Edit config.toml to configure include/exclude patterns (optional)")
-    print("  2. Run 'jedidb index' to index your Python files")
-    print("  3. Run 'jedidb search <query>' to search definitions")
+    if not include and not exclude:
+        print("  1. Edit config.toml to configure include/exclude patterns (optional)")
+        print("  2. Run 'jedidb index' to index your Python files")
+        print("  3. Run 'jedidb search <query>' to search definitions")
+    else:
+        print("  1. Run 'jedidb index' to index your Python files")
+        print("  2. Run 'jedidb search <query>' to search definitions")

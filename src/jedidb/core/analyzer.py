@@ -7,7 +7,7 @@ from typing import Generator
 import jedi
 from jedi.api.classes import Name
 
-from jedidb.core.models import Decorator, Definition, Import, Reference
+from jedidb.core.models import ClassBase, Decorator, Definition, Import, Reference
 from jedidb.utils import get_context_lines, make_search_text
 
 
@@ -74,14 +74,16 @@ class CallOrderVisitor(ast.NodeVisitor):
 class Analyzer:
     """Wraps Jedi to extract code analysis information."""
 
-    def __init__(self, project_path: Path | str | None = None):
+    def __init__(self, project_path: Path | str | None = None, base_classes: bool = True):
         """Initialize the analyzer.
 
         Args:
             project_path: Optional project root for Jedi's project detection
+            base_classes: Whether to extract class base classes (inheritance)
         """
         self.project_path = Path(project_path) if project_path else None
         self._project = None
+        self.base_classes = base_classes
 
         if self.project_path:
             try:
@@ -91,15 +93,15 @@ class Analyzer:
 
     def analyze_file(
         self, file_path: Path, resolve_refs: bool = False
-    ) -> tuple[list[Definition], list[Reference], list[Import], list[Decorator]]:
-        """Analyze a Python file and extract definitions, references, imports, and decorators.
+    ) -> tuple[list[Definition], list[Reference], list[Import], list[Decorator], list[ClassBase]]:
+        """Analyze a Python file and extract definitions, references, imports, decorators, and class bases.
 
         Args:
             file_path: Path to the Python file
             resolve_refs: Whether to resolve reference targets (enables call graph)
 
         Returns:
-            Tuple of (definitions, references, imports, decorators)
+            Tuple of (definitions, references, imports, decorators, class_bases)
         """
         try:
             source = file_path.read_text(encoding="utf-8")
@@ -111,23 +113,24 @@ class Analyzer:
         except Exception as e:
             raise ValueError(f"Could not parse file {file_path}: {e}")
 
-        definitions, decorators = self._extract_definitions_and_decorators(script, file_path)
+        definitions, decorators, class_bases = self._extract_definitions_and_decorators(script, file_path)
         references = list(self._extract_references(script, file_path, source, resolve_refs))
         imports = list(self._extract_imports(script, file_path))
 
-        return definitions, references, imports, decorators
+        return definitions, references, imports, decorators, class_bases
 
     def _extract_definitions_and_decorators(
         self, script: jedi.Script, file_path: Path
-    ) -> tuple[list[Definition], list[Decorator]]:
-        """Extract all definitions and decorators from a script."""
+    ) -> tuple[list[Definition], list[Decorator], list[ClassBase]]:
+        """Extract all definitions, decorators, and class bases from a script."""
         definitions = []
         decorators = []
+        class_bases = []
 
         try:
             names = script.get_names(all_scopes=True, definitions=True, references=False)
         except Exception:
-            return definitions, decorators
+            return definitions, decorators, class_bases
 
         for name in names:
             result = self._name_to_definition(name, file_path)
@@ -136,7 +139,12 @@ class Analyzer:
                 definitions.append(definition)
                 decorators.extend(decs)
 
-        return definitions, decorators
+                # Extract base classes for class definitions
+                if self.base_classes and definition.type == "class":
+                    bases = self._extract_base_classes(name, script)
+                    class_bases.extend(bases)
+
+        return definitions, decorators, class_bases
 
     def _get_definition_range(self, name: Name) -> tuple[int | None, int | None]:
         """Return (end_line, end_col) using Jedi internals."""
@@ -186,6 +194,89 @@ class Analyzer:
         except Exception:
             pass
         return decorators
+
+    def _extract_base_classes(self, name: Name, script: jedi.Script) -> list[ClassBase]:
+        """Extract base classes from a class definition."""
+        bases = []
+        try:
+            internal = name._name
+            if not hasattr(internal, 'tree_name'):
+                return bases
+
+            tree = internal.tree_name
+            parent = tree.parent
+            if not hasattr(parent, 'get_super_arglist'):
+                return bases
+
+            arglist = parent.get_super_arglist()
+            if not arglist:
+                return bases
+
+            # Determine if arglist is a single base or comma-separated list
+            # If arglist.type is 'arglist', it has multiple comma-separated children
+            # Otherwise, arglist itself is the single base class
+            if hasattr(arglist, 'type') and arglist.type == 'arglist':
+                children = arglist.children
+            else:
+                children = [arglist]
+
+            position = 0
+            for child in children:
+                # Skip commas
+                if hasattr(child, 'value') and child.value == ',':
+                    continue
+
+                # Get the base class name - handle both simple names and dotted names
+                base_name = None
+                line, col = None, None
+
+                if hasattr(child, 'type'):
+                    if child.type == 'name':
+                        # Simple name like "Enum"
+                        base_name = child.value
+                        line, col = child.start_pos
+                    elif child.type in ('power', 'atom_expr'):
+                        # Dotted name like "ast.NodeVisitor"
+                        # Get the full code representation
+                        base_name = child.get_code().strip()
+                        # Find rightmost name for goto resolution (e.g., NodeVisitor in ast.NodeVisitor)
+                        rightmost = child
+                        while hasattr(rightmost, 'children') and rightmost.children:
+                            last_child = rightmost.children[-1]
+                            if hasattr(last_child, 'type') and last_child.type == 'trailer':
+                                # trailer has ['.', name] - get the name
+                                if len(last_child.children) >= 2:
+                                    rightmost = last_child.children[-1]
+                            else:
+                                break
+                        line, col = rightmost.start_pos
+                    elif child.type == 'argument':
+                        # Skip keyword arguments like metaclass=X
+                        continue
+
+                if not base_name:
+                    continue
+
+                # Resolve base class via goto
+                base_full_name = None
+                try:
+                    defs = script.goto(line, col)
+                    if defs:
+                        base_full_name = defs[0].full_name
+                except Exception:
+                    pass
+
+                bases.append(ClassBase(
+                    base_name=base_name,
+                    base_full_name=base_full_name,
+                    position=position,
+                    class_full_name=name.full_name,  # For linking later
+                ))
+                position += 1
+        except Exception:
+            pass
+
+        return bases
 
     def _name_to_definition(
         self, name: Name, file_path: Path

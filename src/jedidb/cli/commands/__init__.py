@@ -1,3 +1,3 @@
 """CLI commands for JediDB."""
 
-from jedidb.cli.commands import calls, source
+from jedidb.cli.commands import calls, source, inheritance

@@ -7,7 +7,7 @@ from typing import Any
 
 import duckdb
 
-from jedidb.core.models import Decorator, Definition, FileRecord, Import, Reference
+from jedidb.core.models import ClassBase, Decorator, Definition, FileRecord, Import, Reference
 
 
 SCHEMA_SQL = """
@@ -81,6 +81,17 @@ CREATE TABLE IF NOT EXISTS decorators (
     line INTEGER NOT NULL
 );
 
+-- Class base classes (inheritance)
+CREATE SEQUENCE IF NOT EXISTS class_bases_id_seq;
+CREATE TABLE IF NOT EXISTS class_bases (
+    id INTEGER PRIMARY KEY DEFAULT nextval('class_bases_id_seq'),
+    class_id INTEGER NOT NULL,
+    base_name TEXT NOT NULL,
+    base_full_name TEXT,
+    base_id INTEGER,
+    position INTEGER NOT NULL
+);
+
 -- Call graph (built from resolved references)
 CREATE SEQUENCE IF NOT EXISTS calls_id_seq;
 CREATE TABLE IF NOT EXISTS calls (
@@ -113,6 +124,8 @@ CREATE INDEX IF NOT EXISTS idx_imports_file_id ON imports(file_id);
 CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 CREATE INDEX IF NOT EXISTS idx_decorators_definition_id ON decorators(definition_id);
 CREATE INDEX IF NOT EXISTS idx_decorators_name ON decorators(name);
+CREATE INDEX IF NOT EXISTS idx_class_bases_class ON class_bases(class_id);
+CREATE INDEX IF NOT EXISTS idx_class_bases_base ON class_bases(base_full_name);
 CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(caller_full_name);
 CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls(callee_full_name);
 CREATE INDEX IF NOT EXISTS idx_calls_callee_name ON calls(callee_name);
@@ -252,6 +265,7 @@ class Database:
         """Delete a file and all related records."""
         # Delete related records first (manual cascade)
         self.delete_decorators_by_file(file_id)
+        self.delete_class_bases_by_file(file_id)
         self.execute("DELETE FROM calls WHERE file_id = ?", (file_id,))
         self.execute("DELETE FROM refs WHERE file_id = ?", (file_id,))
         self.execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
@@ -487,6 +501,37 @@ class Database:
             (file_id,)
         )
 
+    # Class bases (inheritance) operations
+
+    def insert_class_bases_batch(self, class_bases: list[ClassBase]):
+        """Insert multiple class bases in a batch."""
+        if not class_bases:
+            return
+
+        data = [
+            (cb.class_id, cb.base_name, cb.base_full_name, cb.base_id, cb.position)
+            for cb in class_bases
+        ]
+
+        self.conn.executemany(
+            """
+            INSERT INTO class_bases (class_id, base_name, base_full_name, base_id, position)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            data
+        )
+
+    def delete_class_bases_by_file(self, file_id: int):
+        """Delete class bases for classes in a file."""
+        self.execute(
+            """
+            DELETE FROM class_bases WHERE class_id IN (
+                SELECT id FROM definitions WHERE file_id = ? AND type = 'class'
+            )
+            """,
+            (file_id,)
+        )
+
     # Post-processing methods
 
     def populate_parent_ids(self):
@@ -548,7 +593,7 @@ class Database:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        tables = ["files", "definitions", "refs", "imports", "decorators", "calls"]
+        tables = ["files", "definitions", "refs", "imports", "decorators", "class_bases", "calls"]
         for table in tables:
             self.execute(f"""
                 COPY {table} TO '{output_dir / f"{table}.parquet"}'
@@ -590,8 +635,25 @@ class Database:
         for stmt in statements:
             db._conn.execute(stmt)
 
+        # Handle class_bases table (may not exist in older indexes)
+        class_bases_parquet = parquet_dir / "class_bases.parquet"
+        if class_bases_parquet.exists():
+            db._conn.execute(f"CREATE OR REPLACE TABLE class_bases AS SELECT * FROM read_parquet('{class_bases_parquet}')")
+        else:
+            # Create empty table for older indexes
+            db._conn.execute("""
+                CREATE TABLE class_bases (
+                    id INTEGER PRIMARY KEY,
+                    class_id INTEGER NOT NULL,
+                    base_name TEXT NOT NULL,
+                    base_full_name TEXT,
+                    base_id INTEGER,
+                    position INTEGER NOT NULL
+                )
+            """)
+
         # Create sequences for incremental inserts (must be done after loading data)
-        for table in ["files", "definitions", "refs", "imports", "decorators", "calls"]:
+        for table in ["files", "definitions", "refs", "imports", "decorators", "class_bases", "calls"]:
             max_id = db._conn.execute(f"SELECT COALESCE(MAX(id), 0) FROM {table}").fetchone()[0]
             db._conn.execute(f"CREATE SEQUENCE {table}_id_seq START WITH {max_id + 1}")
             db._conn.execute(f"ALTER TABLE {table} ALTER COLUMN id SET DEFAULT nextval('{table}_id_seq')")

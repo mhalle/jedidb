@@ -18,6 +18,9 @@ SELECT * FROM read_parquet(getvariable('parquet_dir') || '/imports.parquet');
 CREATE OR REPLACE TABLE decorators AS
 SELECT * FROM read_parquet(getvariable('parquet_dir') || '/decorators.parquet');
 
+-- Note: class_bases table is loaded conditionally in Python (open_parquet)
+-- to handle older indexes that don't have this table
+
 CREATE OR REPLACE TABLE calls AS
 SELECT * FROM read_parquet(getvariable('parquet_dir') || '/calls.parquet');
 

@@ -5,7 +5,7 @@ from typing import Optional
 
 import typer
 
-from jedidb.cli.commands import init, index, search, query, show, export, stats, clean, calls, source
+from jedidb.cli.commands import init, index, search, query, show, export, stats, clean, calls, source, inheritance
 
 
 app = typer.Typer(
@@ -53,6 +53,7 @@ app.command(name="stats")(stats.stats_cmd)
 app.command(name="clean")(clean.clean_cmd)
 app.command(name="calls")(calls.calls_cmd)
 app.command(name="source")(source.source_cmd)
+app.command(name="inheritance")(inheritance.inheritance_cmd)
 
 
 def main():

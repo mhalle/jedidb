@@ -129,6 +129,20 @@ class Decorator:
 
 
 @dataclass
+class ClassBase:
+    """Represents a base class relationship."""
+
+    id: int | None = None
+    class_id: int | None = None
+    base_name: str = ""
+    base_full_name: str | None = None
+    base_id: int | None = None
+    position: int = 0
+    # Temporary field for linking (class_full_name of the child class)
+    class_full_name: str | None = None
+
+
+@dataclass
 class IndexStats:
     """Statistics about the indexed codebase."""
 

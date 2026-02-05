@@ -14,6 +14,7 @@ from jedidb.core.models import (
     Reference,
     Import,
     Decorator,
+    ClassBase,
     SearchResult,
 )
 from jedidb.config import Config
@@ -22,18 +23,20 @@ from jedidb.config import Config
 class JediDB:
     """Main interface for the JediDB code analyzer."""
 
-    def __init__(self, source: Path | str, index: Path | str, resolve_refs: bool = True):
+    def __init__(self, source: Path | str, index: Path | str, resolve_refs: bool = True, base_classes: bool = True):
         """Initialize JediDB for a project.
 
         Args:
             source: Source code directory
             index: Index directory (where jedidb data lives)
             resolve_refs: Whether to resolve reference targets (enables call graph)
+            base_classes: Whether to track class inheritance (base classes)
         """
         self.source = Path(source).resolve()
         self.index = Path(index).resolve()
         self.db_dir = self.index / "db"
         self._resolve_refs = resolve_refs
+        self._base_classes = base_classes
 
         self.config = Config.load(self.index)
 
@@ -44,7 +47,7 @@ class JediDB:
             self.db_dir.mkdir(parents=True, exist_ok=True)
             self.db = Database(":memory:")
 
-        self.analyzer = Analyzer(self.source)
+        self.analyzer = Analyzer(self.source, base_classes=base_classes)
         self.indexer = Indexer(self.db, self.analyzer, resolve_refs=resolve_refs)
         self.search_engine = SearchEngine(self.db)
 
@@ -168,5 +171,6 @@ __all__ = [
     "Reference",
     "Import",
     "Decorator",
+    "ClassBase",
     "SearchResult",
 ]

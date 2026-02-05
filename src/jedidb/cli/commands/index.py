@@ -20,13 +20,13 @@ def index_cmd(
         None,
         "--include",
         "-i",
-        help="Glob patterns to include (e.g., 'src/**/*.py')",
+        help="Patterns to include (e.g., 'src/' or 'mymodule')",
     ),
     exclude: Optional[list[str]] = typer.Option(
         None,
         "--exclude",
         "-e",
-        help="Glob patterns to exclude (e.g., '**/test_*.py')",
+        help="Patterns to exclude (e.g., 'Testing' or 'test_')",
     ),
     force: bool = typer.Option(
         False,
@@ -46,6 +46,11 @@ def index_cmd(
         "-r/-R",
         help="Resolve reference targets for call graph (default: enabled)",
     ),
+    base_classes: bool = typer.Option(
+        True,
+        "--base-classes/--no-base-classes",
+        help="Track class inheritance (default: enabled)",
+    ),
 ):
     """Index Python files in the project.
 
@@ -56,7 +61,7 @@ def index_cmd(
     index = get_index_path(ctx)
 
     try:
-        jedidb = JediDB(source=source, index=index, resolve_refs=resolve_refs)
+        jedidb = JediDB(source=source, index=index, resolve_refs=resolve_refs, base_classes=base_classes)
     except Exception as e:
         print_error(f"Failed to initialize database: {e}")
         raise typer.Exit(1)
