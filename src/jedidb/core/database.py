@@ -283,10 +283,30 @@ class Database:
 
     def insert_definition(self, definition: Definition) -> int:
         """Insert a definition and return its ID."""
-        self.insert_definitions_batch([definition])
         result = self.execute(
-            "SELECT id FROM definitions WHERE file_id = ? AND name = ? AND line = ? ORDER BY id DESC LIMIT 1",
-            (definition.file_id, definition.name, definition.line)
+            """
+            INSERT INTO definitions
+            (file_id, name, full_name, type, line, col, end_line, end_col,
+             signature, docstring, parent_id, parent_full_name, is_public, search_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
+            """,
+            (
+                definition.file_id,
+                definition.name,
+                definition.full_name,
+                definition.type,
+                definition.line,
+                definition.column,
+                definition.end_line,
+                definition.end_column,
+                definition.signature,
+                definition.docstring,
+                definition.parent_id,
+                definition.parent_full_name,
+                definition.is_public,
+                definition.search_text,
+            )
         ).fetchone()
         return result[0]
 
@@ -338,10 +358,26 @@ class Database:
 
     def insert_reference(self, reference: Reference) -> int:
         """Insert a reference and return its ID."""
-        self.insert_references_batch([reference])
         result = self.execute(
-            "SELECT id FROM refs WHERE file_id = ? AND name = ? AND line = ? ORDER BY id DESC LIMIT 1",
-            (reference.file_id, reference.name, reference.line)
+            """
+            INSERT INTO refs (file_id, definition_id, name, line, col, context,
+                              target_full_name, target_module_path, is_call, call_order, call_depth)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
+            """,
+            (
+                reference.file_id,
+                reference.definition_id,
+                reference.name,
+                reference.line,
+                reference.column,
+                reference.context,
+                reference.target_full_name,
+                reference.target_module_path,
+                reference.is_call,
+                reference.call_order,
+                reference.call_depth,
+            )
         ).fetchone()
         return result[0]
 
