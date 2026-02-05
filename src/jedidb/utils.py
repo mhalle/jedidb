@@ -206,7 +206,8 @@ def match_glob_patterns(
     else:
         rel_path = path
 
-    rel_str = str(rel_path)
+    # Use POSIX-style paths for consistent matching across platforms
+    rel_str = rel_path.as_posix()
 
     # Check exclude patterns first
     if exclude:
