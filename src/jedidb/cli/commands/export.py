@@ -49,6 +49,7 @@ def export_cmd(
         raise typer.Exit(1)
 
     # Build query based on table
+    params = None
     if table == "definitions":
         sql = """
             SELECT d.id, d.name, d.full_name, d.type, d.line, d.col as column,
@@ -57,7 +58,8 @@ def export_cmd(
             JOIN files f ON d.file_id = f.id
         """
         if type_filter:
-            sql += f" WHERE d.type = '{type_filter}'"
+            sql += " WHERE d.type = ?"
+            params = (type_filter,)
         sql += " ORDER BY f.path, d.line"
 
     elif table == "files":
@@ -85,7 +87,7 @@ def export_cmd(
         raise typer.Exit(1)
 
     try:
-        result = jedidb.db.execute(sql)
+        result = jedidb.db.execute(sql, params)
         rows = result.fetchall()
         columns = [desc[0] for desc in result.description]
     except Exception as e:
