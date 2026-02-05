@@ -147,13 +147,11 @@ class Analyzer:
         return definitions, decorators, class_bases
 
     def _get_definition_range(self, name: Name) -> tuple[int | None, int | None]:
-        """Return (end_line, end_col) using Jedi internals."""
+        """Return (end_line, end_col) using Jedi's public API."""
         try:
-            tree_name = name._name.tree_name
-            if hasattr(tree_name, "get_definition"):
-                node = tree_name.get_definition()
-                if node and hasattr(node, "end_pos"):
-                    return (node.end_pos[0], node.end_pos[1])
+            end_pos = name.get_definition_end_position()
+            if end_pos:
+                return (end_pos[0], end_pos[1])
         except Exception:
             pass
         return (None, None)
