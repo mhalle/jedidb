@@ -1,5 +1,7 @@
 """Clean command for JediDB CLI."""
 
+import shutil
+
 import typer
 
 from jedidb import JediDB
@@ -33,33 +35,30 @@ def clean_cmd(
     """
     source = get_source_path(ctx)
     index = get_index_path(ctx)
-
-    try:
-        jedidb = JediDB(source=source, index=index)
-    except Exception as e:
-        print_error(f"Failed to open database: {e}")
-        raise typer.Exit(1)
+    db_dir = index / "db"
 
     if all:
         if not force:
             confirm = typer.confirm("This will delete all indexed data. Continue?")
             if not confirm:
-                jedidb.close()
                 print_warning("Aborted")
                 raise typer.Exit(0)
 
-        # Drop all data
-        jedidb.db.execute("DELETE FROM refs")
-        jedidb.db.execute("DELETE FROM imports")
-        jedidb.db.execute("DELETE FROM definitions")
-        jedidb.db.execute("DELETE FROM files")
+        # Just remove the db directory - no need to open the database
+        if db_dir.exists():
+            shutil.rmtree(db_dir)
+        db_dir.mkdir(parents=True, exist_ok=True)
 
-        # Re-export to parquet (so next open gets empty database)
-        jedidb.db.export_to_parquet(jedidb.db_dir)
-
-        jedidb.close()
         print_success("Database reset successfully")
         return
+
+    # For stale cleanup, we need to open the database
+    try:
+        jedidb = JediDB(source=source, index=index)
+    except Exception as e:
+        print_error(f"Failed to open database: {e}")
+        print_error("Try 'jedidb clean --all' to reset the database")
+        raise typer.Exit(1)
 
     if stale:
         # Find files that no longer exist

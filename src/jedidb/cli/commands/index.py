@@ -1,5 +1,6 @@
 """Index command for JediDB CLI."""
 
+import shutil
 import sys
 from pathlib import Path
 from typing import Optional
@@ -7,7 +8,7 @@ from typing import Optional
 import typer
 
 from jedidb import JediDB
-from jedidb.cli.formatters import get_source_path, get_index_path, print_success, print_error, print_info
+from jedidb.cli.formatters import get_source_path, get_index_path, print_success, print_error, print_info, print_warning
 
 
 def index_cmd(
@@ -59,12 +60,26 @@ def index_cmd(
     """
     source = get_source_path(ctx)
     index = get_index_path(ctx)
+    db_dir = index / "db"
 
     try:
         jedidb = JediDB(source=source, index=index, resolve_refs=resolve_refs, base_classes=base_classes)
     except Exception as e:
-        print_error(f"Failed to initialize database: {e}")
-        raise typer.Exit(1)
+        # If database schema is incompatible and we have --force, reset and retry
+        if force and db_dir.exists():
+            print_warning(f"Database schema error, resetting: {e}")
+            shutil.rmtree(db_dir)
+            db_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                jedidb = JediDB(source=source, index=index, resolve_refs=resolve_refs, base_classes=base_classes)
+            except Exception as e2:
+                print_error(f"Failed to initialize database after reset: {e2}")
+                raise typer.Exit(1)
+        else:
+            print_error(f"Failed to initialize database: {e}")
+            if db_dir.exists():
+                print_error("Try 'jedidb index --force' to reset and reindex")
+            raise typer.Exit(1)
 
     # Merge include/exclude with config
     all_include = list(include or []) + jedidb.config.include_patterns
