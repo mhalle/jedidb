@@ -41,6 +41,7 @@ jedidb source --help
 - **Source Display**: View actual source code with line numbers and configurable context
 - **Full-Text Search**: BM25 ranking with CamelCase/snake_case tokenization
 - **Wildcard Search**: Prefix (`get*`), suffix (`*Engine`), and pattern (`get*path`) matching
+- **Watch Mode**: Automatically reindex files when they change
 - **SQL Interface**: Query the index directly with DuckDB SQL
 - **LLM-Friendly Output**: Auto-detects terminal vs pipe, outputs JSON/JSONL for tooling
 - **Lightweight Storage**: Parquet files with zstd compression (~1.5MB for 24K definitions)
@@ -65,6 +66,9 @@ uv add jedidb
 # Initialize and index
 jedidb init
 jedidb index
+
+# Watch for changes and reindex automatically
+jedidb index --watch
 
 # Index with call graph disabled (faster, but no caller/callee queries)
 jedidb index --no-resolve-refs
@@ -128,15 +132,43 @@ Options:
 jedidb index [OPTIONS] [PATHS]...
 
 Options:
-  -i, --include               PATTERN  Glob patterns to include (e.g., 'src/**/*.py')
-  -e, --exclude               PATTERN  Glob patterns to exclude
-  -f, --force                          Force re-index all files
-  -r, --resolve-refs (default)         Resolve reference targets (enables call graph)
-  -R, --no-resolve-refs                Skip reference resolution (faster indexing)
-  -C, --project                        Project directory
+  -i, --include PATTERN              Patterns to include (combined with config)
+  -e, --exclude PATTERN              Patterns to exclude (combined with config)
+  -f, --force                        Force re-index all files
+  -q, --quiet                        Suppress progress output
+  -w, --watch                        Watch for changes and reindex automatically
+  -r, --resolve-refs (default)       Resolve reference targets (enables call graph)
+  -R, --no-resolve-refs              Skip reference resolution (faster indexing)
+  -C, --project                      Project directory
 ```
 
+Patterns use simplified syntax: `Testing` matches directories, `test_` matches file prefixes, `_test` matches suffixes. Full globs like `**/test_*.py` also work. See [Include/Exclude Patterns](#includeexclude-patterns) for details.
+
 Reference resolution is enabled by default, building the call graph. Use `--no-resolve-refs` / `-R` for faster indexing if you don't need caller/callee queries (~30% faster).
+
+### Watch Mode
+
+Watch mode monitors your source directory for file changes and automatically reindexes:
+
+```bash
+jedidb index --watch              # Index, then watch for changes
+jedidb index --watch --quiet      # Watch with minimal output
+```
+
+When a Python file is modified, added, or deleted:
+- **Modified/Added**: The file is reindexed incrementally
+- **Deleted**: The file is removed from the index
+
+The watcher respects your exclude patterns from both command-line (`--exclude`) and config file. Press `Ctrl+C` to stop watching.
+
+Example output:
+```
+Watching /path/to/project for changes... (Ctrl+C to stop)
+[14:32:15] Changed: mymodule.py
+OK: Indexed 1 file(s)
+[14:33:02] Deleted: old_file.py
+OK: Removed 1 file(s)
+```
 
 ### calls
 
@@ -242,15 +274,55 @@ db.close()
 
 ## Configuration
 
-`.jedidb.toml` in project root:
+`.jedidb/config.toml` in project root:
 
 ```toml
-[jedidb]
-db_path = ".jedidb"
-
-include = ["src/**/*.py"]
-exclude = ["**/test_*.py", "**/*_test.py"]
+include = ["src/"]
+exclude = ["Testing", "test_", "_test"]
 ```
+
+### Include/Exclude Patterns
+
+Patterns support a **simplified syntax** that expands to full globs:
+
+| Pattern | Expands To | Matches |
+|---------|-----------|---------|
+| `Testing` | `**/Testing/**` | Any file under a `Testing/` directory |
+| `test_` | `**/test_*.py` | Files starting with `test_` (trailing `_`) |
+| `_test` | `**/*_test.py` | Files ending with `_test` (leading `_`) |
+| `test_*` | `**/test_*.py` | Wildcard filename pattern |
+| `src/` | `src/**` | Everything under `src/` directory |
+| `src/utils/` | `src/utils/**` | Everything under `src/utils/` |
+| `**/test_*.py` | `**/test_*.py` | Full glob (used as-is) |
+
+**Examples:**
+```toml
+# Exclude test directories and test files
+exclude = ["Testing", "test_", "_test"]
+
+# Only index specific directories
+include = ["src/", "lib/"]
+
+# Full glob patterns also work
+exclude = ["**/test_*.py", "**/conftest.py"]
+```
+
+### CLI and Config Pattern Merging
+
+CLI `--include` and `--exclude` options are **combined** with config patterns (additive, not override):
+
+```bash
+# Config has: exclude = ["Testing"]
+# This ADDS to config, excluding both Testing/ AND benchmark files
+jedidb index --exclude "bench_"
+```
+
+**Resolution order:**
+1. **Excludes are checked first** - if ANY exclude pattern matches, file is skipped
+2. **Includes are OR** - file included if it matches ANY include pattern
+3. If no includes specified, all non-excluded `.py` files are indexed
+
+Default excludes (always applied): `__pycache__`, `.git`, `.venv`, `.tox`, `node_modules`, `build`, `dist`, etc.
 
 ## Storage
 
@@ -353,6 +425,7 @@ WHERE r.id IS NULL AND d.type IN ('function', 'class');
 - duckdb >= 1.0.0
 - typer >= 0.12.0
 - rich >= 13.0.0
+- watchfiles >= 0.20.0
 
 ## Credits
 

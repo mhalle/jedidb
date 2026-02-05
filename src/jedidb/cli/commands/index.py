@@ -2,6 +2,7 @@
 
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -9,6 +10,43 @@ import typer
 
 from jedidb import JediDB
 from jedidb.cli.formatters import get_source_path, get_index_path, print_success, print_error, print_info, print_warning
+from jedidb.utils import expand_pattern, glob_match
+
+
+def make_watch_filter(exclude_patterns: list[str], source: Path):
+    """Create a watchfiles filter from exclude patterns.
+
+    Args:
+        exclude_patterns: List of exclude patterns (simplified or full glob)
+        source: Source directory for relative path matching
+
+    Returns:
+        Filter class for watchfiles
+    """
+    from watchfiles import DefaultFilter
+
+    # Expand patterns once
+    expanded_patterns = [expand_pattern(p) for p in exclude_patterns]
+
+    class JediDBFilter(DefaultFilter):
+        def __call__(self, change, path: str) -> bool:
+            # Only watch .py files
+            if not path.endswith('.py'):
+                return False
+            # Apply default filters (ignores .git, __pycache__, etc.)
+            if not super().__call__(change, path):
+                return False
+            # Apply user exclude patterns
+            try:
+                rel_path = str(Path(path).relative_to(source))
+            except ValueError:
+                rel_path = path
+            for pattern in expanded_patterns:
+                if glob_match(rel_path, pattern):
+                    return False
+            return True
+
+    return JediDBFilter()
 
 
 def index_cmd(
@@ -21,13 +59,13 @@ def index_cmd(
         None,
         "--include",
         "-i",
-        help="Patterns to include (e.g., 'src/' or 'mymodule')",
+        help="Patterns to include (e.g., 'src/', 'mymodule'); combined with config",
     ),
     exclude: Optional[list[str]] = typer.Option(
         None,
         "--exclude",
         "-e",
-        help="Patterns to exclude (e.g., 'Testing' or 'test_')",
+        help="Patterns to exclude (e.g., 'Testing', 'test_', '_test'); combined with config",
     ),
     force: bool = typer.Option(
         False,
@@ -40,6 +78,12 @@ def index_cmd(
         "--quiet",
         "-q",
         help="Suppress progress output",
+    ),
+    watch: bool = typer.Option(
+        False,
+        "--watch",
+        "-w",
+        help="Watch for file changes and reindex incrementally",
     ),
     resolve_refs: bool = typer.Option(
         True,
@@ -57,6 +101,9 @@ def index_cmd(
 
     Only changed files are re-indexed unless --force is used.
     Data is stored as compressed parquet files (~30-40x smaller than DuckDB).
+
+    Patterns use simplified syntax: 'Testing' matches directories, 'test_' matches
+    file prefixes, '_test' matches suffixes. Full globs like '**/test_*.py' also work.
     """
     source = get_source_path(ctx)
     index = get_index_path(ctx)
@@ -133,8 +180,6 @@ def index_cmd(
             force=force,
         )
 
-    jedidb.close()
-
     # Print results
     print()
     print_success(f"Indexed {stats['files_indexed']} files")
@@ -160,3 +205,73 @@ def index_cmd(
             print(f"  {err['file']}: {err['error']}", file=sys.stderr)
         if len(stats["errors"]) > 5:
             print(f"  ... and {len(stats['errors']) - 5} more", file=sys.stderr)
+
+    # Close database after initial index
+    jedidb.close()
+
+    # Watch mode
+    if watch:
+        from watchfiles import watch as fs_watch, Change
+
+        print()
+        print_info(f"Watching {source} for changes... (Ctrl+C to stop)")
+
+        # Build filter from config exclude patterns
+        watch_filter = make_watch_filter(all_exclude, source)
+
+        try:
+            for changes in fs_watch(source, watch_filter=watch_filter):
+                # Classify changes
+                changed_files = []
+                deleted_files = []
+                for change_type, path in changes:
+                    if not path.endswith('.py'):
+                        continue
+                    if change_type == Change.deleted:
+                        deleted_files.append(path)
+                    else:
+                        changed_files.append(path)
+
+                if not changed_files and not deleted_files:
+                    continue
+
+                # Show what changed
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                if not quiet:
+                    for path in changed_files:
+                        print(f"[{timestamp}] Changed: {Path(path).name}")
+                    for path in deleted_files:
+                        print(f"[{timestamp}] Deleted: {Path(path).name}")
+
+                # Open fresh database connection for this batch of changes
+                try:
+                    jedidb = JediDB(source=source, index=index, resolve_refs=resolve_refs, base_classes=base_classes)
+                except Exception as e:
+                    print_error(f"Failed to open database: {e}")
+                    continue
+
+                try:
+                    # Reindex changed files
+                    if changed_files:
+                        file_stats = jedidb.index_files(paths=changed_files)
+                        if not quiet:
+                            print_success(f"Indexed {file_stats['files_indexed']} file(s)")
+                        if file_stats["errors"]:
+                            for err in file_stats["errors"]:
+                                print_error(f"  {err['file']}: {err['error']}")
+
+                    # Handle deletions
+                    if deleted_files:
+                        for path in deleted_files:
+                            rel_path = str(Path(path).relative_to(source))
+                            jedidb.db.delete_file_by_path(rel_path)
+                        jedidb.db.export_to_parquet(jedidb.db_dir)
+                        if not quiet:
+                            print_success(f"Removed {len(deleted_files)} file(s)")
+                except Exception as e:
+                    print_error(f"Index error: {e}")
+                finally:
+                    jedidb.close()
+
+        except KeyboardInterrupt:
+            print("\nWatch mode stopped.")
