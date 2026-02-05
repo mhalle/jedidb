@@ -167,3 +167,77 @@ class TestDatabase:
 
         # File should still exist due to rollback
         assert temp_db.get_file("test.py") is not None
+
+    def test_insert_definition_duplicate_name_line(self, temp_db):
+        """Test that insert_definition returns correct ID with duplicate name+line but different columns."""
+        file_record = FileRecord(path="test.py", hash="abc", size=100)
+        file_id = temp_db.insert_file(file_record)
+
+        # Insert two definitions with same name and line but different columns
+        def1 = Definition(
+            file_id=file_id,
+            name="x",
+            full_name="module.x",
+            type="variable",
+            line=10,
+            column=0,
+        )
+        def2 = Definition(
+            file_id=file_id,
+            name="x",
+            full_name="module.x",
+            type="variable",
+            line=10,
+            column=5,  # Different column
+        )
+
+        id1 = temp_db.insert_definition(def1)
+        id2 = temp_db.insert_definition(def2)
+
+        # IDs should be different
+        assert id1 != id2
+
+        # Verify both records exist with correct columns
+        result = temp_db.execute(
+            "SELECT id, col FROM definitions WHERE file_id = ? ORDER BY id",
+            (file_id,)
+        ).fetchall()
+        assert len(result) == 2
+        assert result[0] == (id1, 0)
+        assert result[1] == (id2, 5)
+
+    def test_insert_reference_duplicate_name_line(self, temp_db):
+        """Test that insert_reference returns correct ID with duplicate name+line but different columns."""
+        file_record = FileRecord(path="test.py", hash="abc", size=100)
+        file_id = temp_db.insert_file(file_record)
+
+        # Insert two references with same name and line but different columns
+        ref1 = Reference(
+            file_id=file_id,
+            name="func",
+            line=20,
+            column=0,
+            is_call=True,
+        )
+        ref2 = Reference(
+            file_id=file_id,
+            name="func",
+            line=20,
+            column=10,  # Different column
+            is_call=True,
+        )
+
+        id1 = temp_db.insert_reference(ref1)
+        id2 = temp_db.insert_reference(ref2)
+
+        # IDs should be different
+        assert id1 != id2
+
+        # Verify both records exist with correct columns
+        result = temp_db.execute(
+            "SELECT id, col FROM refs WHERE file_id = ? ORDER BY id",
+            (file_id,)
+        ).fetchall()
+        assert len(result) == 2
+        assert result[0] == (id1, 0)
+        assert result[1] == (id2, 10)
