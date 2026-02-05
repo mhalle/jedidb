@@ -1,5 +1,6 @@
 """Main Typer application for JediDB CLI."""
 
+from importlib.resources import files
 from pathlib import Path
 from typing import Optional
 
@@ -11,14 +12,13 @@ from jedidb.cli.commands import init, index, search, query, show, export, stats,
 app = typer.Typer(
     name="jedidb",
     help="Jedi code analyzer with DuckDB storage and full-text search.",
-    no_args_is_help=True,
     add_completion=False,
     rich_markup_mode=None,
     pretty_exceptions_enable=False,
 )
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def main_callback(
     ctx: typer.Context,
     source: Optional[Path] = typer.Option(
@@ -32,8 +32,32 @@ def main_callback(
         "--index",
         help="Index directory (default: <source>/.jedidb)",
     ),
+    readme: bool = typer.Option(
+        False,
+        "--readme",
+        help="Print the README and exit",
+    ),
 ):
     """Jedi code analyzer with DuckDB storage and full-text search."""
+    if readme:
+        try:
+            readme_text = files("jedidb").joinpath("README.md").read_text()
+            print(readme_text)
+        except FileNotFoundError:
+            # Fallback for development: read from project root
+            project_readme = Path(__file__).parent.parent.parent.parent / "README.md"
+            if project_readme.exists():
+                print(project_readme.read_text())
+            else:
+                print("README.md not found")
+                raise typer.Exit(1)
+        raise typer.Exit(0)
+
+    # Show help if no command provided
+    if ctx.invoked_subcommand is None:
+        print(ctx.get_help())
+        raise typer.Exit(0)
+
     ctx.ensure_object(dict)
 
     source_path = (source or Path.cwd()).resolve()

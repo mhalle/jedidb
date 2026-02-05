@@ -33,6 +33,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/jedidb"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"README.md" = "jedidb/README.md"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
