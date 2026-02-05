@@ -427,6 +427,21 @@ WHERE r.id IS NULL AND d.type IN ('function', 'class');
 - rich >= 13.0.0
 - watchfiles >= 0.20.0
 
+## Caveats
+
+### Jedi Internal API Usage
+
+Two features use Jedi's internal APIs (`_name.tree_name`) which may change between Jedi versions:
+
+| Feature | Fallback if API changes |
+|---------|------------------------|
+| Decorator extraction | Returns empty list (decorators won't be indexed) |
+| Base class extraction | Returns empty list (inheritance won't be tracked) |
+
+These accesses are guarded with try/except, so JediDB will continue to work if Jedi's internals change - you'll just lose decorator and inheritance data. Core functionality (definitions, references, imports, call graphs, search) uses only Jedi's public API.
+
+If you encounter issues after a Jedi upgrade, please [report them](https://github.com/mhalle/jedidb/issues).
+
 ## Credits
 
 Built on [Jedi](https://github.com/davidhalter/jedi), the excellent Python static analysis library.
