@@ -1,5 +1,7 @@
 """Output formatters for CLI."""
 
+import csv
+import io
 import json
 import sys
 from enum import Enum
@@ -22,6 +24,83 @@ class OutputFormat(str, Enum):
 def get_default_format() -> OutputFormat:
     """Return 'table' for interactive terminals, 'jsonl' for pipes/redirects."""
     return OutputFormat.table if sys.stdout.isatty() else OutputFormat.jsonl
+
+
+def get_format_from_extension(path: Path) -> OutputFormat | None:
+    """Detect output format from file extension.
+
+    Returns None if extension is not recognized.
+    """
+    ext = path.suffix.lower()
+    return {
+        ".json": OutputFormat.json,
+        ".jsonl": OutputFormat.jsonl,
+        ".csv": OutputFormat.csv,
+    }.get(ext)
+
+
+def resolve_output_format(
+    output_format: OutputFormat | None,
+    output_path: Path | None,
+) -> OutputFormat:
+    """Resolve output format: explicit > file extension > auto-detect."""
+    if output_format is not None:
+        return output_format
+    if output_path:
+        return get_format_from_extension(output_path) or OutputFormat.jsonl
+    return get_default_format()
+
+
+def format_data_json(data: list[dict]) -> str:
+    """Format list of dicts as pretty JSON."""
+    return json.dumps(data, indent=2, default=str)
+
+
+def format_data_jsonl(data: list[dict]) -> str:
+    """Format list of dicts as newline-delimited JSON."""
+    return "\n".join(json.dumps(row, separators=(",", ":"), default=str) for row in data)
+
+
+def format_data_csv(data: list[dict], columns: list[str] | None = None) -> str:
+    """Format list of dicts as CSV using csv module.
+
+    Args:
+        data: List of dictionaries to format
+        columns: Column order (uses first row's keys if not specified)
+    """
+    if not data:
+        return ""
+
+    if columns is None:
+        columns = list(data[0].keys())
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=columns, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(data)
+    return output.getvalue().rstrip("\n")
+
+
+def write_output(
+    content: str,
+    output_path: Path | None,
+    row_count: int | None = None,
+) -> None:
+    """Write content to file or stdout.
+
+    Args:
+        content: The formatted content to write
+        output_path: File path to write to, or None for stdout
+        row_count: Optional count for success message
+    """
+    if output_path:
+        output_path.write_text(content)
+        if row_count is not None:
+            print_success(f"Wrote {row_count} row(s) to {output_path}")
+        else:
+            print_success(f"Wrote to {output_path}")
+    else:
+        print(content)
 
 
 def get_source_path(ctx: typer.Context) -> Path:

@@ -6,7 +6,15 @@ from typing import Optional
 import typer
 
 from jedidb import JediDB
-from jedidb.cli.formatters import get_source_path, get_index_path, format_json, print_error, print_success
+from jedidb.cli.formatters import (
+    get_source_path,
+    get_index_path,
+    format_data_json,
+    format_data_csv,
+    get_format_from_extension,
+    write_output,
+    print_error,
+)
 
 
 def export_cmd(
@@ -15,13 +23,13 @@ def export_cmd(
         None,
         "--output",
         "-o",
-        help="Output file path (default: stdout)",
+        help="Output file path (format auto-detected from extension: .json, .csv)",
     ),
-    output_format: str = typer.Option(
-        "json",
+    output_format: Optional[str] = typer.Option(
+        None,
         "--format",
         "-f",
-        help="Output format: json, csv",
+        help="Output format: json, csv (default: json, or auto-detected from -o)",
     ),
     table: str = typer.Option(
         "definitions",
@@ -39,6 +47,14 @@ def export_cmd(
 
     Export indexed data for external analysis or backup.
     """
+    # Resolve output format: explicit > file extension > default (json)
+    if output_format is None:
+        if output:
+            detected = get_format_from_extension(output)
+            output_format = detected.value if detected else "json"
+        else:
+            output_format = "json"
+
     source = get_source_path(ctx)
     index = get_index_path(ctx)
 
@@ -61,9 +77,11 @@ def export_cmd(
             sql += " WHERE d.type = ?"
             params = (type_filter,)
         sql += " ORDER BY f.path, d.line"
+        columns = ["id", "name", "full_name", "type", "line", "column", "signature", "docstring", "is_public", "file"]
 
     elif table == "files":
         sql = "SELECT id, path, hash, size, modified_at, indexed_at FROM files ORDER BY path"
+        columns = ["id", "path", "hash", "size", "modified_at", "indexed_at"]
 
     elif table == "refs":
         sql = """
@@ -72,6 +90,7 @@ def export_cmd(
             JOIN files f ON r.file_id = f.id
             ORDER BY f.path, r.line
         """
+        columns = ["id", "name", "line", "column", "context", "file"]
 
     elif table == "imports":
         sql = """
@@ -80,6 +99,7 @@ def export_cmd(
             JOIN files f ON i.file_id = f.id
             ORDER BY f.path, i.line
         """
+        columns = ["id", "module", "name", "alias", "line", "file"]
 
     else:
         jedidb.close()
@@ -89,7 +109,6 @@ def export_cmd(
     try:
         result = jedidb.db.execute(sql, params)
         rows = result.fetchall()
-        columns = [desc[0] for desc in result.description]
     except Exception as e:
         jedidb.close()
         print_error(f"Query error: {e}")
@@ -97,30 +116,13 @@ def export_cmd(
 
     jedidb.close()
 
+    # Convert to list of dicts
+    data = [dict(zip(columns, row)) for row in rows]
+
     # Format output
     if output_format == "json":
-        data = [dict(zip(columns, row)) for row in rows]
-        content = format_json(data)
+        content = format_data_json(data)
     else:
-        # CSV
-        lines = [",".join(columns)]
-        for row in rows:
-            values = []
-            for val in row:
-                if val is None:
-                    values.append("")
-                elif isinstance(val, str):
-                    if '"' in val or "," in val or "\n" in val:
-                        val = '"' + val.replace('"', '""') + '"'
-                    values.append(val)
-                else:
-                    values.append(str(val))
-            lines.append(",".join(values))
-        content = "\n".join(lines)
+        content = format_data_csv(data, columns)
 
-    # Write output
-    if output:
-        output.write_text(content)
-        print_success(f"Exported {len(rows)} rows to {output}")
-    else:
-        print(content)
+    write_output(content, output, len(rows))

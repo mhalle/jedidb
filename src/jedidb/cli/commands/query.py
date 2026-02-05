@@ -1,5 +1,6 @@
 """Query command for JediDB CLI."""
 
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -8,8 +9,11 @@ from jedidb import JediDB
 from jedidb.cli.formatters import (
     get_source_path,
     get_index_path,
-    format_json,
-    get_default_format,
+    format_data_json,
+    format_data_jsonl,
+    format_data_csv,
+    resolve_output_format,
+    write_output,
     OutputFormat,
     print_error,
 )
@@ -33,6 +37,12 @@ def query_cmd(
         "-n",
         help="Limit number of results (adds LIMIT clause if not present)",
     ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output file (format auto-detected from extension: .json, .jsonl, .csv)",
+    ),
 ):
     """Execute a raw SQL query against the database.
 
@@ -49,10 +59,10 @@ def query_cmd(
         jedidb query "SELECT full_name, (end_line - line) as size FROM definitions ORDER BY size DESC" -n 20
 
         jedidb query "DESCRIBE definitions"   # show table schema
+
+        jedidb query "SELECT * FROM definitions" -o defs.csv  # output to CSV
     """
-    # Resolve output format (table for TTY, jsonl for pipes)
-    if output_format is None:
-        output_format = get_default_format()
+    output_format = resolve_output_format(output_format, output)
 
     source = get_source_path(ctx)
     index = get_index_path(ctx)
@@ -83,32 +93,16 @@ def query_cmd(
         print("No results")
         raise typer.Exit(0)
 
+    # Convert to list of dicts
+    data = [dict(zip(columns, row)) for row in rows]
+
+    # Format output
     if output_format == OutputFormat.json:
-        data = [dict(zip(columns, row)) for row in rows]
-        print(format_json(data))
-
+        content = format_data_json(data)
     elif output_format == OutputFormat.jsonl:
-        import json
-        for row in rows:
-            print(json.dumps(dict(zip(columns, row)), separators=(",", ":"), default=str))
-
+        content = format_data_jsonl(data)
     elif output_format == OutputFormat.csv:
-        # Header
-        print(",".join(columns))
-        # Rows
-        for row in rows:
-            values = []
-            for val in row:
-                if val is None:
-                    values.append("")
-                elif isinstance(val, str):
-                    if '"' in val or "," in val or "\n" in val:
-                        val = '"' + val.replace('"', '""') + '"'
-                    values.append(val)
-                else:
-                    values.append(str(val))
-            print(",".join(values))
-
+        content = format_data_csv(data, columns)
     else:
         # Table format - plain text
         col_widths = [len(c) for c in columns]
@@ -116,13 +110,17 @@ def query_cmd(
             for i, val in enumerate(row):
                 col_widths[i] = max(col_widths[i], len(str(val) if val is not None else ""))
 
+        lines = []
         # Header
         header = "  ".join(f"{col:<{col_widths[i]}}" for i, col in enumerate(columns))
-        print(header)
-        print("-" * len(header))
+        lines.append(header)
+        lines.append("-" * len(header))
 
         # Rows
         for row in rows:
-            print("  ".join(f"{(str(v) if v is not None else ''):<{col_widths[i]}}" for i, v in enumerate(row)))
+            lines.append("  ".join(f"{(str(v) if v is not None else ''):<{col_widths[i]}}" for i, v in enumerate(row)))
 
-        print(f"\n{len(rows)} row(s)")
+        lines.append(f"\n{len(rows)} row(s)")
+        content = "\n".join(lines)
+
+    write_output(content, output, len(rows))

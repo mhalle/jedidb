@@ -12,7 +12,8 @@ from jedidb.cli.formatters import (
     get_index_path,
     format_json,
     format_source_block,
-    get_default_format,
+    resolve_output_format,
+    write_output,
     OutputFormat,
     print_error,
     print_info,
@@ -60,6 +61,12 @@ def source_cmd(
         "-f",
         help="Output format (default: table for terminal, jsonl for pipes)",
     ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output file (format auto-detected from extension: .json, .jsonl)",
+    ),
 ):
     """Display source code for definitions, call sites, or references.
 
@@ -85,13 +92,14 @@ def source_cmd(
         jedidb source MyClass --refs          # show all references with source
 
         jedidb source parse --format json     # JSON output for tooling
+
+        jedidb source parse -o source.json   # output to file
     """
     if not name and id is None:
         print_error("Must provide either NAME argument or --id option")
         raise typer.Exit(1)
 
-    if output_format is None:
-        output_format = get_default_format()
+    output_format = resolve_output_format(output_format, output)
 
     source_root = get_source_path(ctx)
     index = get_index_path(ctx)
@@ -108,7 +116,7 @@ def source_cmd(
             jedidb.close()
             print_error("--all requires a NAME argument")
             raise typer.Exit(1)
-        _list_all_definitions(jedidb, name, output_format)
+        _list_all_definitions(jedidb, name, output_format, output)
         jedidb.close()
         raise typer.Exit(0)
 
@@ -130,11 +138,11 @@ def source_cmd(
     file_path = _resolve_file_path(definition.file_path, source_root)
 
     if calls:
-        _show_calls(jedidb, definition, source_root, context, output_format)
+        _show_calls(jedidb, definition, source_root, context, output_format, output)
     elif refs:
-        _show_refs(jedidb, definition, source_root, context, output_format)
+        _show_refs(jedidb, definition, source_root, context, output_format, output)
     else:
-        _show_definition(definition, file_path, context, output_format)
+        _show_definition(definition, file_path, context, output_format, output)
 
     jedidb.close()
 
@@ -149,7 +157,7 @@ def _resolve_file_path(file_path: str | None, source_root: Path) -> Path | None:
     return source_root / path
 
 
-def _list_all_definitions(jedidb, name: str, output_format: OutputFormat):
+def _list_all_definitions(jedidb, name: str, output_format: OutputFormat, output: Path | None):
     """List all definitions matching a name (including imports)."""
     query = """
         SELECT
@@ -167,47 +175,40 @@ def _list_all_definitions(jedidb, name: str, output_format: OutputFormat):
         print_info(f"No definitions found matching: {name}")
         return
 
+    data = [
+        {
+            "id": r[0],
+            "name": r[1],
+            "full_name": r[2],
+            "type": r[3],
+            "file": r[4],
+            "line": r[5],
+            "end_line": r[6],
+            "size": r[7],
+        }
+        for r in results
+    ]
+
     if output_format == OutputFormat.json:
-        data = [
-            {
-                "id": r[0],
-                "name": r[1],
-                "full_name": r[2],
-                "type": r[3],
-                "file": r[4],
-                "line": r[5],
-                "end_line": r[6],
-                "size": r[7],
-            }
-            for r in results
-        ]
-        print(format_json(data))
+        content = format_json(data)
     elif output_format == OutputFormat.jsonl:
-        for r in results:
-            data = {
-                "id": r[0],
-                "name": r[1],
-                "full_name": r[2],
-                "type": r[3],
-                "file": r[4],
-                "line": r[5],
-                "end_line": r[6],
-            }
-            print(json.dumps(data, separators=(",", ":")))
+        content = "\n".join(json.dumps(d, separators=(",", ":")) for d in data)
     else:
         # Table format
-        print(f"Definitions matching '{name}':")
-        print()
-        print(f"{'ID':>6}  {'Type':<10} {'Lines':>10}  {'File':<50}")
-        print("-" * 80)
+        lines = [f"Definitions matching '{name}':", ""]
+        lines.append(f"{'ID':>6}  {'Type':<10} {'Lines':>10}  {'File':<50}")
+        lines.append("-" * 80)
         for r in results:
             line_range = f"{r[5]}"
             if r[6] and r[6] != r[5]:
                 line_range += f"-{r[6]}"
             size_note = "" if r[7] > 0 else " (import)"
-            print(f"{r[0]:>6}  {r[3]:<10} {line_range:>10}  {r[4]:<50}{size_note}")
-        print()
-        print(f"{len(results)} definition(s). Use --id to view source.")
+            lines.append(f"{r[0]:>6}  {r[3]:<10} {line_range:>10}  {r[4]:<50}{size_note}")
+        lines.append("")
+        lines.append(f"{len(results)} definition(s). Use --id to view source.")
+        content = "\n".join(lines)
+
+    write_output(content, output, len(results))
 
 
 def _read_source_lines(
@@ -245,6 +246,7 @@ def _show_definition(
     file_path: Path | None,
     context: int,
     output_format: OutputFormat,
+    output: Path | None,
 ):
     """Show source code for a definition."""
     if not file_path or not file_path.exists():
@@ -278,7 +280,7 @@ def _show_definition(
                 "lines": [line.rstrip("\n") for line in lines],
             },
         }
-        print(format_json(data))
+        content = format_json(data)
     elif output_format == OutputFormat.jsonl:
         data = {
             "full_name": definition.full_name,
@@ -287,16 +289,19 @@ def _show_definition(
             "end_line": definition.end_line,
             "source": "".join(lines),
         }
-        print(json.dumps(data, separators=(",", ":")))
+        content = json.dumps(data, separators=(",", ":"))
     else:
         # Table format
-        print(f"{definition.full_name or definition.name}")
+        output_lines = [f"{definition.full_name or definition.name}"]
         line_range = f"{definition.line}"
         if definition.end_line and definition.end_line != definition.line:
             line_range += f"-{definition.end_line}"
-        print(f"{definition.file_path}:{line_range}")
-        print()
-        print(format_source_block(lines, start))
+        output_lines.append(f"{definition.file_path}:{line_range}")
+        output_lines.append("")
+        output_lines.append(format_source_block(lines, start))
+        content = "\n".join(output_lines)
+
+    write_output(content, output)
 
 
 def _show_calls(
@@ -305,6 +310,7 @@ def _show_calls(
     source_root: Path,
     context: int,
     output_format: OutputFormat,
+    output: Path | None,
 ):
     """Show call sites from a function with source context."""
     if definition.type not in ("function", "class"):
@@ -333,15 +339,17 @@ def _show_calls(
         raise typer.Exit(0)
 
     if output_format == OutputFormat.json:
-        _output_calls_json(results, source_root, context)
+        content = _format_calls_json(results, source_root, context)
     elif output_format == OutputFormat.jsonl:
-        _output_calls_jsonl(results, source_root, context)
+        content = _format_calls_jsonl(results, source_root, context)
     else:
-        _output_calls_table(results, source_root, context, definition)
+        content = _format_calls_table(results, source_root, context, definition)
+
+    write_output(content, output, len(results))
 
 
-def _output_calls_json(results, source_root: Path, context: int):
-    """Output calls in JSON format."""
+def _format_calls_json(results, source_root: Path, context: int) -> str:
+    """Format calls as JSON."""
     calls = []
     for r in results:
         file_path = _resolve_file_path(r[2], source_root)
@@ -359,11 +367,12 @@ def _output_calls_json(results, source_root: Path, context: int):
                 "lines": [line.rstrip("\n") for line in lines],
             },
         })
-    print(format_json(calls))
+    return format_json(calls)
 
 
-def _output_calls_jsonl(results, source_root: Path, context: int):
-    """Output calls in JSONL format."""
+def _format_calls_jsonl(results, source_root: Path, context: int) -> str:
+    """Format calls as JSONL."""
+    output_lines = []
     for r in results:
         file_path = _resolve_file_path(r[2], source_root)
         lines, _, _ = _read_source_lines(file_path, r[3], None, context) if file_path else ([], 0, 0)
@@ -374,13 +383,13 @@ def _output_calls_jsonl(results, source_root: Path, context: int):
             "line": r[3],
             "source": "".join(lines),
         }
-        print(json.dumps(data, separators=(",", ":")))
+        output_lines.append(json.dumps(data, separators=(",", ":")))
+    return "\n".join(output_lines)
 
 
-def _output_calls_table(results, source_root: Path, context: int, definition):
-    """Output calls in table format."""
-    print(f"Calls from {definition.full_name}:")
-    print()
+def _format_calls_table(results, source_root: Path, context: int, definition) -> str:
+    """Format calls as table."""
+    output_lines = [f"Calls from {definition.full_name}:", ""]
 
     for r in results:
         file_path = _resolve_file_path(r[2], source_root)
@@ -389,11 +398,12 @@ def _output_calls_table(results, source_root: Path, context: int, definition):
 
         lines, start, _ = _read_source_lines(file_path, r[3], None, context)
         if lines:
-            print(f"{r[2]}:{r[3]}")
-            print(format_source_block(lines, start))
-            print()
+            output_lines.append(f"{r[2]}:{r[3]}")
+            output_lines.append(format_source_block(lines, start))
+            output_lines.append("")
 
-    print(f"{len(results)} call(s)")
+    output_lines.append(f"{len(results)} call(s)")
+    return "\n".join(output_lines)
 
 
 def _show_refs(
@@ -402,6 +412,7 @@ def _show_refs(
     source_root: Path,
     context: int,
     output_format: OutputFormat,
+    output: Path | None,
 ):
     """Show references to a definition with source context."""
     references = jedidb.search_engine.find_references(definition.name)
@@ -411,15 +422,17 @@ def _show_refs(
         raise typer.Exit(0)
 
     if output_format == OutputFormat.json:
-        _output_refs_json(references, source_root, context)
+        content = _format_refs_json(references, source_root, context)
     elif output_format == OutputFormat.jsonl:
-        _output_refs_jsonl(references, source_root, context)
+        content = _format_refs_jsonl(references, source_root, context)
     else:
-        _output_refs_table(references, source_root, context, definition)
+        content = _format_refs_table(references, source_root, context, definition)
+
+    write_output(content, output, len(references))
 
 
-def _output_refs_json(references, source_root: Path, context: int):
-    """Output references in JSON format."""
+def _format_refs_json(references, source_root: Path, context: int) -> str:
+    """Format references as JSON."""
     refs = []
     for r in references:
         file_path = _resolve_file_path(r.file_path, source_root)
@@ -435,11 +448,12 @@ def _output_refs_json(references, source_root: Path, context: int):
                 "lines": [line.rstrip("\n") for line in lines],
             },
         })
-    print(format_json(refs))
+    return format_json(refs)
 
 
-def _output_refs_jsonl(references, source_root: Path, context: int):
-    """Output references in JSONL format."""
+def _format_refs_jsonl(references, source_root: Path, context: int) -> str:
+    """Format references as JSONL."""
+    output_lines = []
     for r in references:
         file_path = _resolve_file_path(r.file_path, source_root)
         lines, _, _ = _read_source_lines(file_path, r.line, None, context) if file_path else ([], 0, 0)
@@ -448,13 +462,13 @@ def _output_refs_jsonl(references, source_root: Path, context: int):
             "line": r.line,
             "source": "".join(lines),
         }
-        print(json.dumps(data, separators=(",", ":")))
+        output_lines.append(json.dumps(data, separators=(",", ":")))
+    return "\n".join(output_lines)
 
 
-def _output_refs_table(references, source_root: Path, context: int, definition):
-    """Output references in table format."""
-    print(f"References to {definition.full_name or definition.name}:")
-    print()
+def _format_refs_table(references, source_root: Path, context: int, definition) -> str:
+    """Format references as table."""
+    output_lines = [f"References to {definition.full_name or definition.name}:", ""]
 
     for r in references:
         file_path = _resolve_file_path(r.file_path, source_root)
@@ -463,8 +477,9 @@ def _output_refs_table(references, source_root: Path, context: int, definition):
 
         lines, start, _ = _read_source_lines(file_path, r.line, None, context)
         if lines:
-            print(f"{r.file_path}:{r.line}")
-            print(format_source_block(lines, start))
-            print()
+            output_lines.append(f"{r.file_path}:{r.line}")
+            output_lines.append(format_source_block(lines, start))
+            output_lines.append("")
 
-    print(f"{len(references)} reference(s)")
+    output_lines.append(f"{len(references)} reference(s)")
+    return "\n".join(output_lines)

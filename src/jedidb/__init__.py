@@ -1,6 +1,6 @@
 """JediDB - Jedi code analyzer with DuckDB storage and full-text search."""
 
-__version__ = "0.3.9"
+__version__ = "0.3.10"
 
 from pathlib import Path
 

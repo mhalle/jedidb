@@ -73,9 +73,6 @@ jedidb init --exclude test_ --exclude _test
 # Watch for changes and reindex automatically
 jedidb index --watch
 
-# Index with call graph disabled (faster, but no caller/callee queries)
-jedidb index --no-resolve-refs
-
 # Search
 jedidb search parse                    # full-text search
 jedidb search "get*"                   # prefix search
@@ -182,8 +179,8 @@ Arguments:
   NAME  Name or full name of the function to show calls for
 
 Options:
-  -d, --depth INTEGER             Recursion depth for call tree [default: 1]
-  -t, --top-level                 Only show top-level calls (not nested as arguments)
+  -d, --depth INTEGER             Recurse into callees (1 = direct calls only) [default: 1]
+  -t, --top-level                 Hide nested calls like args in foo(bar())
   --tree                          Show calls as a tree
   -f, --format [table|json|jsonl] Output format (auto-detected)
 ```
@@ -192,8 +189,8 @@ Show what a function calls in execution order:
 
 ```bash
 jedidb calls Model.save              # Direct calls from Model.save
-jedidb calls Model.save --depth 2    # Include calls made by callees
-jedidb calls Model.save --top-level  # Only top-level calls (depth=1)
+jedidb calls Model.save --depth 2    # Also show what those callees call
+jedidb calls Model.save --top-level  # Hide nested calls (e.g., args in foo(bar()))
 jedidb calls Model.save --tree       # Show as indented tree
 ```
 

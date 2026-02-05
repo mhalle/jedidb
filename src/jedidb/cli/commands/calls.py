@@ -1,5 +1,6 @@
 """Calls command for JediDB CLI."""
 
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -8,8 +9,10 @@ from jedidb import JediDB
 from jedidb.cli.formatters import (
     get_source_path,
     get_index_path,
-    format_json,
-    get_default_format,
+    format_data_json,
+    format_data_jsonl,
+    resolve_output_format,
+    write_output,
     OutputFormat,
     print_error,
     print_info,
@@ -95,6 +98,12 @@ def calls_cmd(
         "-f",
         help="Output format (default: table for terminal, jsonl for pipes)",
     ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output file (format auto-detected from extension: .json, .jsonl)",
+    ),
 ):
     """Show what a function calls in execution order.
 
@@ -112,9 +121,10 @@ def calls_cmd(
         jedidb calls __init__ --tree         # show as indented tree
 
         jedidb calls parse --format json     # JSON output for tooling
+
+        jedidb calls parse -o calls.json     # output to file
     """
-    if output_format is None:
-        output_format = get_default_format()
+    output_format = resolve_output_format(output_format, output)
 
     source = get_source_path(ctx)
     index = get_index_path(ctx)
@@ -187,17 +197,14 @@ def calls_cmd(
         print_info(f"No calls found in {definition.full_name}")
         raise typer.Exit(0)
 
+    # Format output
     if output_format == OutputFormat.json:
-        print(format_json(calls))
+        content = format_data_json(calls)
     elif output_format == OutputFormat.jsonl and not tree:
-        import json
-        for c in calls:
-            print(json.dumps(c, separators=(",", ":")))
+        content = format_data_jsonl(calls)
     elif tree:
-        print(f"Calls from {definition.full_name}:")
-        print(format_calls_tree(calls))
+        content = f"Calls from {definition.full_name}:\n{format_calls_tree(calls)}"
     else:
-        print(f"Calls from {definition.full_name}:")
-        print()
-        print(format_calls_table(calls, show_depth=not top_level))
-        print(f"\n{len(calls)} call(s)")
+        content = f"Calls from {definition.full_name}:\n\n{format_calls_table(calls, show_depth=not top_level)}\n\n{len(calls)} call(s)"
+
+    write_output(content, output, len(calls))

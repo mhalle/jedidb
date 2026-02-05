@@ -1,6 +1,7 @@
 """Search command for JediDB CLI."""
 
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -10,8 +11,11 @@ from jedidb.cli.formatters import (
     get_source_path,
     get_index_path,
     format_search_results_table,
-    format_json,
-    get_default_format,
+    format_data_json,
+    format_data_jsonl,
+    format_data_csv,
+    resolve_output_format,
+    write_output,
     OutputFormat,
     print_error,
     print_info,
@@ -56,6 +60,12 @@ def search_cmd(
         "-f",
         help="Output format (default: table for terminal, jsonl for pipes)",
     ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output file (format auto-detected from extension: .json, .jsonl, .csv)",
+    ),
 ):
     """Full-text search for definitions.
 
@@ -73,10 +83,10 @@ def search_cmd(
         jedidb search test -p            # include private (_test, __init__)
 
         jedidb search api --format json  # JSON output for scripting
+
+        jedidb search api -o results.csv # output to CSV file
     """
-    # Resolve output format (table for TTY, jsonl for pipes)
-    if output_format is None:
-        output_format = get_default_format()
+    output_format = resolve_output_format(output_format, output)
 
     source = get_source_path(ctx)
     index = get_index_path(ctx)
@@ -100,34 +110,29 @@ def search_cmd(
         print_info("No results found")
         raise typer.Exit(0)
 
+    # Convert results to list of dicts
+    data = [
+        {
+            "name": r.definition.name,
+            "full_name": r.definition.full_name,
+            "type": r.definition.type,
+            "file": r.definition.file_path,
+            "line": r.definition.line,
+            "score": r.score,
+            "signature": r.definition.signature,
+            "docstring": r.definition.docstring,
+        }
+        for r in results
+    ]
+
+    # Format output
     if output_format == OutputFormat.json:
-        data = [
-            {
-                "name": r.definition.name,
-                "full_name": r.definition.full_name,
-                "type": r.definition.type,
-                "file": r.definition.file_path,
-                "line": r.definition.line,
-                "score": r.score,
-                "signature": r.definition.signature,
-                "docstring": r.definition.docstring,
-            }
-            for r in results
-        ]
-        print(format_json(data))
+        content = format_data_json(data)
     elif output_format == OutputFormat.jsonl:
-        import json
-        for r in results:
-            print(json.dumps({
-                "name": r.definition.name,
-                "full_name": r.definition.full_name,
-                "type": r.definition.type,
-                "file": r.definition.file_path,
-                "line": r.definition.line,
-                "score": r.score,
-                "signature": r.definition.signature,
-                "docstring": r.definition.docstring,
-            }, separators=(",", ":")))
+        content = format_data_jsonl(data)
+    elif output_format == OutputFormat.csv:
+        content = format_data_csv(data)
     else:
-        print(format_search_results_table(results))
-        print(f"\n{len(results)} result(s)")
+        content = format_search_results_table(results) + f"\n\n{len(results)} result(s)"
+
+    write_output(content, output, len(results))
