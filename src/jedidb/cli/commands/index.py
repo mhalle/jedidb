@@ -10,13 +10,14 @@ import typer
 
 from jedidb import JediDB
 from jedidb.cli.formatters import get_source_path, get_index_path, print_success, print_error, print_info, print_warning
-from jedidb.utils import expand_pattern, glob_match
+from jedidb.utils import expand_pattern, expand_patterns, glob_match, match_glob_patterns
 
 
-def make_watch_filter(exclude_patterns: list[str], source: Path):
-    """Create a watchfiles filter from exclude patterns.
+def make_watch_filter(include_patterns: list[str], exclude_patterns: list[str], source: Path):
+    """Create a watchfiles filter from include/exclude patterns.
 
     Args:
+        include_patterns: List of include patterns (simplified or full glob)
         exclude_patterns: List of exclude patterns (simplified or full glob)
         source: Source directory for relative path matching
 
@@ -26,7 +27,8 @@ def make_watch_filter(exclude_patterns: list[str], source: Path):
     from watchfiles import DefaultFilter
 
     # Expand patterns once
-    expanded_patterns = [expand_pattern(p) for p in exclude_patterns]
+    expanded_include = [expand_pattern(p) for p in include_patterns] if include_patterns else None
+    expanded_exclude = [expand_pattern(p) for p in exclude_patterns]
 
     class JediDBFilter(DefaultFilter):
         def __call__(self, change, path: str) -> bool:
@@ -36,14 +38,21 @@ def make_watch_filter(exclude_patterns: list[str], source: Path):
             # Apply default filters (ignores .git, __pycache__, etc.)
             if not super().__call__(change, path):
                 return False
-            # Apply user exclude patterns
+            # Get relative path for pattern matching
             try:
-                rel_path = str(Path(path).relative_to(source))
+                rel_path = Path(path).relative_to(source).as_posix()
             except ValueError:
                 rel_path = path
-            for pattern in expanded_patterns:
+            # Apply user exclude patterns
+            for pattern in expanded_exclude:
                 if glob_match(rel_path, pattern):
                     return False
+            # Apply user include patterns (if specified, must match at least one)
+            if expanded_include:
+                for pattern in expanded_include:
+                    if glob_match(rel_path, pattern):
+                        return True
+                return False
             return True
 
     return JediDBFilter()
@@ -216,8 +225,12 @@ def index_cmd(
         print()
         print_info(f"Watching {source} for changes... (Ctrl+C to stop)")
 
-        # Build filter from config exclude patterns
-        watch_filter = make_watch_filter(all_exclude, source)
+        # Build filter from config include/exclude patterns
+        watch_filter = make_watch_filter(all_include, all_exclude, source)
+
+        # Pre-expand patterns for filtering changed files
+        expanded_include = expand_patterns(all_include) if all_include else None
+        expanded_exclude = expand_patterns(all_exclude) if all_exclude else None
 
         try:
             for changes in fs_watch(source, watch_filter=watch_filter):
@@ -251,20 +264,39 @@ def index_cmd(
                     continue
 
                 try:
-                    # Reindex changed files
+                    # Reindex changed files (filter against include/exclude patterns)
                     if changed_files:
-                        file_stats = jedidb.index_files(paths=changed_files)
-                        if not quiet:
-                            print_success(f"Indexed {file_stats['files_indexed']} file(s)")
-                        if file_stats["errors"]:
-                            for err in file_stats["errors"]:
-                                print_error(f"  {err['file']}: {err['error']}")
+                        filtered_files = [
+                            f for f in changed_files
+                            if match_glob_patterns(Path(f), expanded_include, expanded_exclude, source)
+                        ]
+                        if filtered_files:
+                            file_stats = jedidb.index_files(paths=filtered_files)
+                            if not quiet:
+                                print_success(f"Indexed {file_stats['files_indexed']} file(s)")
+                            if file_stats["errors"]:
+                                for err in file_stats["errors"]:
+                                    print_error(f"  {err['file']}: {err['error']}")
 
                     # Handle deletions
                     if deleted_files:
                         for path in deleted_files:
-                            rel_path = str(Path(path).relative_to(source))
+                            rel_path = Path(path).relative_to(source).as_posix()
                             jedidb.db.delete_file_by_path(rel_path)
+                        # Rebuild derived data (parent_ids, call graph, FTS index)
+                        try:
+                            jedidb.db.populate_parent_ids()
+                        except Exception:
+                            pass
+                        if resolve_refs:
+                            try:
+                                jedidb.db.build_call_graph()
+                            except Exception:
+                                pass
+                        try:
+                            jedidb.db.create_fts_index()
+                        except Exception:
+                            pass
                         jedidb.db.export_to_parquet(jedidb.db_dir)
                         if not quiet:
                             print_success(f"Removed {len(deleted_files)} file(s)")
