@@ -67,6 +67,9 @@ uv add jedidb
 jedidb init
 jedidb index
 
+# Or initialize with exclude patterns (e.g., skip test files)
+jedidb init --exclude test_ --exclude _test
+
 # Watch for changes and reindex automatically
 jedidb index --watch
 

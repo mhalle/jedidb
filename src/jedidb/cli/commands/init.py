@@ -80,13 +80,13 @@ def init_cmd(
             include_str = ", ".join(f'"{p}"' for p in include)
             config_lines.append(f"include = [{include_str}]")
         else:
-            config_lines.append('# include = ["**/*.py"]')
+            config_lines.append("# include = []  # Empty means all .py files (default)")
 
         if exclude:
             exclude_str = ", ".join(f'"{p}"' for p in exclude)
             config_lines.append(f"exclude = [{exclude_str}]")
         else:
-            config_lines.append('# exclude = ["**/test_*.py"]')
+            config_lines.append('# exclude = ["test_", "_test"]  # or use globs: "**/test_*.py"')
 
         config_lines.append("")
         config_file.write_text("\n".join(config_lines))
