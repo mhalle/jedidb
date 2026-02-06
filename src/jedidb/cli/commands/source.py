@@ -225,7 +225,7 @@ def _read_source_lines(
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             all_lines = f.readlines()
-    except Exception:
+    except (OSError, UnicodeDecodeError):
         return [], start_line, start_line
 
     # Calculate actual line range

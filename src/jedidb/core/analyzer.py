@@ -1,6 +1,7 @@
 """Jedi-based code analyzer for JediDB."""
 
 import ast
+import logging
 from pathlib import Path
 from typing import Generator
 
@@ -9,6 +10,8 @@ from jedi.api.classes import Name
 
 from jedidb.core.models import ClassBase, Decorator, Definition, Import, Reference
 from jedidb.utils import get_context_lines, make_search_text
+
+logger = logging.getLogger("jedidb.analyzer")
 
 
 class CallOrderVisitor(ast.NodeVisitor):
@@ -88,8 +91,8 @@ class Analyzer:
         if self.project_path:
             try:
                 self._project = jedi.Project(path=str(self.project_path))
-            except Exception:
-                pass
+            except (OSError, ValueError) as e:
+                logger.debug("Could not create Jedi project for %s: %s", self.project_path, e)
 
     def analyze_file(
         self, file_path: Path, resolve_refs: bool = False
@@ -105,13 +108,13 @@ class Analyzer:
         """
         try:
             source = file_path.read_text(encoding="utf-8")
-        except Exception as e:
-            raise ValueError(f"Could not read file {file_path}: {e}")
+        except (OSError, UnicodeDecodeError) as e:
+            raise ValueError(f"Could not read file {file_path}: {e}") from e
 
         try:
             script = jedi.Script(source, path=str(file_path), project=self._project)
-        except Exception as e:
-            raise ValueError(f"Could not parse file {file_path}: {e}")
+        except (ValueError, SyntaxError) as e:
+            raise ValueError(f"Could not parse file {file_path}: {e}") from e
 
         definitions, decorators, class_bases = self._extract_definitions_and_decorators(script, file_path)
         references = list(self._extract_references(script, file_path, source, resolve_refs))
@@ -129,7 +132,8 @@ class Analyzer:
 
         try:
             names = script.get_names(all_scopes=True, definitions=True, references=False)
-        except Exception:
+        except (AttributeError, ValueError) as e:
+            logger.debug("Could not get definitions from script: %s", e)
             return definitions, decorators, class_bases
 
         for name in names:
@@ -152,8 +156,8 @@ class Analyzer:
             end_pos = name.get_definition_end_position()
             if end_pos:
                 return (end_pos[0], end_pos[1])
-        except Exception:
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("Could not get definition end position for %s: %s", name.name, e)
         return (None, None)
 
     def _extract_decorators(self, name: Name) -> list[dict]:
@@ -189,8 +193,9 @@ class Analyzer:
                                 "arguments": dec_args,
                                 "line": dec.start_pos[0]
                             })
-        except Exception:
-            pass
+        except AttributeError as e:
+            # Expected when Jedi internal API changes - decorators are optional
+            logger.debug("Could not extract decorators (Jedi internal API): %s", e)
         return decorators
 
     def _extract_base_classes(self, name: Name, script: jedi.Script) -> list[ClassBase]:
@@ -261,8 +266,8 @@ class Analyzer:
                     defs = script.goto(line, col)
                     if defs:
                         base_full_name = defs[0].full_name
-                except Exception:
-                    pass
+                except (AttributeError, IndexError) as e:
+                    logger.debug("Could not resolve base class %s: %s", base_name, e)
 
                 bases.append(ClassBase(
                     base_name=base_name,
@@ -271,8 +276,9 @@ class Analyzer:
                     class_full_name=name.full_name,  # For linking later
                 ))
                 position += 1
-        except Exception:
-            pass
+        except AttributeError as e:
+            # Expected when Jedi internal API changes - base classes are optional
+            logger.debug("Could not extract base classes (Jedi internal API): %s", e)
 
         return bases
 
@@ -300,8 +306,8 @@ class Analyzer:
                     sigs = name.get_signatures()
                     if sigs:
                         signature = sigs[0].to_string()
-                except Exception:
-                    pass
+                except (AttributeError, IndexError, TypeError) as e:
+                    logger.debug("Could not get signature for %s: %s", name.name, e)
 
             # Get docstring
             docstring = None
@@ -311,8 +317,8 @@ class Analyzer:
                     docstring = docstring.strip()
                     if not docstring:
                         docstring = None
-            except Exception:
-                pass
+            except (AttributeError, TypeError) as e:
+                logger.debug("Could not get docstring for %s: %s", name.name, e)
 
             # Determine full name
             full_name = name.full_name
@@ -359,7 +365,8 @@ class Analyzer:
                     decorators.append(dec)
 
             return definition, decorators
-        except Exception:
+        except (AttributeError, TypeError, ValueError) as e:
+            logger.debug("Could not convert Jedi name to definition: %s", e)
             return None
 
     def _extract_references(
@@ -368,7 +375,8 @@ class Analyzer:
         """Extract all references from a script."""
         try:
             names = script.get_names(all_scopes=True, definitions=False, references=True)
-        except Exception:
+        except (AttributeError, ValueError) as e:
+            logger.debug("Could not get references from script: %s", e)
             return
 
         source_lines = source.splitlines()
@@ -410,8 +418,8 @@ class Analyzer:
                             target_full_name = target.full_name
                             if target.module_path:
                                 target_module_path = str(target.module_path)
-                    except Exception:
-                        pass
+                    except (AttributeError, IndexError) as e:
+                        logger.debug("Could not resolve reference target for %s: %s", name.name, e)
 
                 # Detect call sites by checking if '(' follows the name
                 is_call = False
@@ -441,7 +449,8 @@ class Analyzer:
                     call_order=call_order,
                     call_depth=call_depth,
                 )
-            except Exception:
+            except (AttributeError, TypeError, ValueError) as e:
+                logger.debug("Could not process reference: %s", e)
                 continue
 
     def _extract_imports(
@@ -450,7 +459,8 @@ class Analyzer:
         """Extract all imports from a script."""
         try:
             names = script.get_names(all_scopes=False, definitions=True, references=False)
-        except Exception:
+        except (AttributeError, ValueError) as e:
+            logger.debug("Could not get imports from script: %s", e)
             return
 
         for name in names:
@@ -477,7 +487,8 @@ class Analyzer:
                     alias=alias,
                     line=line,
                 )
-            except Exception:
+            except (AttributeError, TypeError) as e:
+                logger.debug("Could not process import: %s", e)
                 continue
 
     def _map_jedi_type(self, jedi_type: str) -> str | None:
@@ -518,7 +529,8 @@ class Analyzer:
                 }
                 for c in completions
             ]
-        except Exception:
+        except (OSError, UnicodeDecodeError, ValueError, AttributeError) as e:
+            logger.debug("Could not get completions: %s", e)
             return []
 
     def get_signatures(self, file_path: Path, line: int, column: int) -> list[dict]:
@@ -546,7 +558,8 @@ class Analyzer:
                 }
                 for s in signatures
             ]
-        except Exception:
+        except (OSError, UnicodeDecodeError, ValueError, AttributeError) as e:
+            logger.debug("Could not get signatures: %s", e)
             return []
 
     def goto_definition(self, file_path: Path, line: int, column: int) -> list[dict]:
@@ -576,5 +589,6 @@ class Analyzer:
                 }
                 for d in definitions
             ]
-        except Exception:
+        except (OSError, UnicodeDecodeError, ValueError, AttributeError) as e:
+            logger.debug("Could not get goto definition: %s", e)
             return []

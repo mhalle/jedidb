@@ -1,9 +1,12 @@
 """Utility functions for JediDB."""
 
 import hashlib
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger("jedidb.utils")
 
 
 def compute_file_hash(file_path: Path) -> str:
@@ -290,7 +293,8 @@ def get_context_lines(file_path: Path, line: int, context: int = 1) -> str:
         end = min(len(lines), line + context)
 
         return "".join(lines[start:end]).rstrip()
-    except Exception:
+    except (OSError, UnicodeDecodeError) as e:
+        logger.debug("Could not read context lines from %s: %s", file_path, e)
         return ""
 
 

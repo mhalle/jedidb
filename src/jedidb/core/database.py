@@ -1,5 +1,6 @@
 """DuckDB database management for JediDB."""
 
+import logging
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +9,8 @@ from typing import Any
 import duckdb
 
 from jedidb.core.models import ClassBase, Decorator, Definition, FileRecord, Import, Reference
+
+logger = logging.getLogger("jedidb.database")
 
 
 SCHEMA_SQL = """
@@ -173,8 +176,9 @@ class Database:
         try:
             self.conn.execute(FTS_SETUP_SQL)
             self._fts_initialized = True
-        except Exception:
-            # FTS extension might already be loaded
+        except duckdb.Error as e:
+            # FTS extension might already be loaded, or not available
+            logger.debug("FTS initialization: %s", e)
             self._fts_initialized = True
 
     def create_fts_index(self):
@@ -184,7 +188,7 @@ class Database:
         # Drop existing FTS index if it exists
         try:
             self.conn.execute("PRAGMA drop_fts_index('definitions')")
-        except Exception:
+        except duckdb.Error:
             pass  # Index might not exist
 
         # Create new FTS index on search_text (contains original + split tokens + docstring)
@@ -214,7 +218,7 @@ class Database:
         try:
             yield
             self.conn.execute("COMMIT")
-        except Exception:
+        except BaseException:
             self.conn.execute("ROLLBACK")
             raise
 

@@ -1,10 +1,15 @@
 """File indexing logic for JediDB."""
 
+import logging
 from pathlib import Path
 from typing import Callable
 
+import duckdb
+
 from jedidb.core.analyzer import Analyzer
 from jedidb.core.database import Database
+
+logger = logging.getLogger("jedidb.indexer")
 from jedidb.core.models import ClassBase, Definition, FileRecord, Import, Reference
 from jedidb.utils import (
     compute_file_hash,
@@ -182,20 +187,20 @@ class Indexer:
         if stats["files_indexed"] > 0 or stats["files_removed"] > 0:
             try:
                 self.db.populate_parent_ids()
-            except Exception:
-                pass
+            except duckdb.Error as e:
+                logger.warning("Failed to populate parent IDs: %s", e)
 
             if self.resolve_refs:
                 try:
                     self.db.build_call_graph()
-                except Exception:
-                    pass
+                except duckdb.Error as e:
+                    logger.warning("Failed to build call graph: %s", e)
 
             # Rebuild FTS index after changes
             try:
                 self.db.create_fts_index()
-            except Exception:
-                pass  # FTS index creation is optional
+            except duckdb.Error as e:
+                logger.debug("FTS index creation skipped: %s", e)
 
         return stats
 
@@ -371,7 +376,7 @@ class Indexer:
         if stats["indexed"]:
             try:
                 self.db.create_fts_index()
-            except Exception:
-                pass
+            except duckdb.Error as e:
+                logger.debug("FTS index creation skipped: %s", e)
 
         return stats

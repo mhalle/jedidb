@@ -2,7 +2,12 @@
 
 __version__ = "0.3.10"
 
+import logging
 from pathlib import Path
+
+# Configure library logger - users can adjust level via logging.getLogger("jedidb")
+logger = logging.getLogger("jedidb")
+logger.addHandler(logging.NullHandler())
 
 from jedidb.core.database import Database
 from jedidb.core.indexer import Indexer

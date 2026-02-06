@@ -1,8 +1,14 @@
 """Full-text search interface for JediDB."""
 
+import logging
+
+import duckdb
+
 from jedidb.core.database import Database
 from jedidb.core.models import Definition, Reference, SearchResult
 from jedidb.utils import split_identifier
+
+logger = logging.getLogger("jedidb.search")
 
 
 class SearchEngine:
@@ -44,7 +50,8 @@ class SearchEngine:
         # Word/phrase search: try FTS first, fall back to LIKE
         try:
             return self._fts_search(query, type, limit, include_private)
-        except Exception:
+        except duckdb.Error as e:
+            logger.debug("FTS search failed, falling back to LIKE: %s", e)
             return self._like_search(query, type, limit, include_private)
 
     def _convert_wildcard_pattern(self, pattern: str) -> str:

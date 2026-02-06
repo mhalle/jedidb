@@ -2,9 +2,63 @@
 
 An experimental Python code indexer with Jedi analysis and full-text search.
 
+
+
+JediDB is an experiment built to help **LLMs explore
+Python code**. One of the best uses for LLMs is to help explain
+unfamiliar code bases. However, that can be a challenge for them. By
+looking only through files of code, they can forget things. They can
+lose track of things. They have trouble handling long files and
+abstractions that span multiple files - just like people, in fact.
+
+JediDB is a Python CLI that crawls a local python code base (for
+instance, a git checkout --depth 1), builds an analysis database, and
+provides command line tools to query and search it. 
+
+## Background
+
+I looked around for tools that could help with the "help LLMs explore
+code" problem.  Surprisingly, I couldn't find too many, at least
+modern ones. There are many Python code analysis packages out there,
+but most involve LSP / language server-like interactive analysis on
+dynamically changing code for tasks like autocompletion.
+
+In fact, when I let David Halter, the creator of
+[Jedi](https://github.com/davidhalter/jedi) ("an awesome
+autocompletion, static analysis and refactoring library for Python"),
+know about my project, he said, "I think this is fundamentally the
+wrong direction and why I wrote Zuban in the first place." Fair
+enough. However, I'm interested in giving LLMs the ability to explore
+static code bases. I don't really care about interactivity. There's
+plenty of hard to understand code at rest.
+
+And, frankly, I don't care that much about types or typechecking. I
+love types, but that's not what I'm most interested in, especially for
+stable code that works. I care more about program and code
+structure. What calls what, what inherits from what, where's that darn
+function, etc.
+
+But even that information can become overwhelming for a person,
+especially if they have to write queries to find it. That's where LLMs
+come in. I want to let LLMs explore code doing what they do really
+well now: running scripts and writing complex queries and extracting
+information to build their own mental model of code, then explaining
+it to me.
+
+JediDB is a Python CLI for LLMs to explore code without blowing out their
+context window with raw Python.
+
+Like I said, I used Jedi because it gave me library-level access to
+code parsing. If there are other libraries that can do the same,
+please let me know.
+
 ## Why JediDB?
 
-This program, JediDB, is an experiment built to help **LLMs explore Python code**. Unlike embedding-based tools, JediDB uses [Jedi](https://github.com/davidhalter/jedi) for real Python semantic analysis - the same engine that powers IDE autocompletion. The results are stored in Parquet files and searched/queried with DuckDB, including full text search.
+Unlike RAG embedding-based or pure text-based tools, JediDB uses
+[Jedi](https://github.com/davidhalter/jedi) for Python semantic
+analysis - the same engine that powers IDE autocompletion. The results
+are stored in highly compressed Parquet files (less then 2MB for
+Django) and searched/queried with DuckDB, including full text search.
 
 | Feature | JediDB | Embedding tools | Call graph tools |
 |---------|--------|-----------------|------------------|
@@ -16,7 +70,8 @@ This program, JediDB, is an experiment built to help **LLMs explore Python code*
 | Structured JSON output | Auto-detected | Varies | No |
 | No external services | Yes | Often needs Ollama/API | Yes |
 
-**One tool** for search, source viewing, call navigation, and custom SQL queries - all with CLI-friendly table or JSON output.
+**One tool** for search, source viewing, call navigation, and custom
+  SQL queries - all with CLI-friendly table or JSON output.
 
 ## What Can JediDB Do?
 
@@ -44,7 +99,7 @@ jedidb source --help
 - **Smart Re-indexing**: Skips if nothing changed, full re-index if anything changed
 - **SQL Interface**: Query the index directly with DuckDB SQL
 - **LLM-Friendly Output**: Auto-detects terminal vs pipe, outputs JSON/JSONL for tooling
-- **Lightweight Storage**: Parquet files with zstd compression (~1.5MB for 24K definitions in the Diango code base)
+- **Lightweight Storage**: Parquet files with zstd compression (~1.5MB for 24K definitions in the Django code base)
 - **Zero Cloud Dependencies**: No cloud services, no Ollama, no API keys
 
 ## Installation
@@ -220,14 +275,17 @@ Override with `--format table` or `--format jsonl` as needed.
 ```python
 from jedidb import JediDB
 
-db = JediDB(path="./myproject")
+# Initialize with source directory and index location
+# source: where your Python code lives
+# index: where JediDB stores its data (typically .jedidb in project root)
+db = JediDB(source="./myproject", index="./myproject/.jedidb")
 
 # Index (includes call graph by default)
-db.index(include=["src/**/*.py"], exclude=["**/test_*.py"])
+db.index_files(include=["src/**/*.py"], exclude=["**/test_*.py"])
 
 # Index without reference resolution (faster, no call graph)
-db = JediDB(path="./myproject", resolve_refs=False)
-db.index()
+db = JediDB(source="./myproject", index="./myproject/.jedidb", resolve_refs=False)
+db.index_files()
 
 # Search
 results = db.search("parse", type="function", limit=10)
@@ -310,16 +368,19 @@ Default excludes (always applied): `__pycache__`, `.git`, `.venv`, `.tox`, `node
 
 ## Storage
 
-Data is stored as compressed parquet files in `.jedidb/`:
+Data is stored as compressed parquet files in `.jedidb/db/`:
 
 ```
 .jedidb/
-  definitions.parquet   # functions, classes, variables (with end positions, parent info)
-  files.parquet         # indexed files with hashes
-  refs.parquet          # references/usages (with resolved targets by default)
-  imports.parquet       # import statements
-  decorators.parquet    # decorators on functions/classes
-  calls.parquet         # call graph (built from resolved refs)
+  config.toml           # include/exclude patterns
+  db/
+    definitions.parquet   # functions, classes, variables (with end positions, parent info)
+    files.parquet         # indexed files with hashes
+    refs.parquet          # references/usages (with resolved targets by default)
+    imports.parquet       # import statements
+    decorators.parquet    # decorators on functions/classes
+    class_bases.parquet   # class inheritance (base classes)
+    calls.parquet         # call graph (built from resolved refs)
 ```
 
 Typical sizes:
@@ -345,29 +406,154 @@ jedidb search "*_cmd"           # underscore is literal, not wildcard
 
 ## Database Schema
 
+The index uses DuckDB (SQLite-compatible SQL). Here are the table schemas:
+
 ```sql
+-- files: indexed source files
+files (
+    id, path, hash, size, modified_at, indexed_at
+)
+
 -- definitions: functions, classes, variables, params, modules
--- Includes end_line/end_column for definition ranges
--- parent_full_name links nested definitions to their parent
-SELECT name, full_name, type, line, end_line, parent_full_name, signature
-FROM definitions WHERE type = 'function';
+definitions (
+    id, file_id, name, full_name,
+    type,           -- 'function', 'class', 'variable', 'param', 'module'
+    line, col, end_line, end_col,
+    signature,      -- function/method signature
+    docstring,
+    parent_id, parent_full_name,  -- for nested definitions
+    is_public       -- FALSE if name starts with _
+)
 
--- files: indexed files with modification tracking
-SELECT path, hash, size, indexed_at FROM files;
-
--- refs: references to names (target resolution enabled by default)
-SELECT name, line, context, target_full_name, is_call FROM refs;
+-- refs: references/usages of names
+refs (
+    id, file_id, definition_id, name,
+    line, col, context,           -- source line containing the reference
+    target_full_name,             -- resolved target (if --resolve-refs)
+    target_module_path,
+    is_call,                      -- TRUE if this is a function call
+    call_order, call_depth        -- execution order within caller
+)
 
 -- imports: import statements
-SELECT module, name, alias FROM imports;
+imports (
+    id, file_id, module, name, alias, line
+)
 
--- decorators: decorators on functions/classes
-SELECT d.full_name, dec.name as decorator
-FROM definitions d JOIN decorators dec ON dec.definition_id = d.id;
+-- decorators: @decorator on functions/classes
+decorators (
+    id, definition_id, name, full_name, arguments, line
+)
 
--- calls: call graph (populated by default)
-SELECT caller_full_name, callee_full_name, line FROM calls;
+-- class_bases: inheritance relationships
+class_bases (
+    id, class_id, base_name, base_full_name, base_id, position
+)
+
+-- calls: call graph (caller -> callee)
+calls (
+    id, file_id,
+    caller_full_name, caller_id,
+    callee_full_name, callee_name, callee_id,
+    line, col, context,
+    call_order, call_depth        -- execution order within caller
+)
 ```
+
+**Key joins:** `definitions.file_id → files.id`, `calls.caller_id → definitions.id`, `decorators.definition_id → definitions.id`, `class_bases.class_id → definitions.id`
+
+### Convenience Views
+
+JediDB creates these views at runtime (via `init.sql` when DuckDB loads the parquet files) to simplify common queries:
+
+| View | Description |
+|------|-------------|
+| `functions` | All function/method definitions with `file_path` |
+| `classes` | All class definitions with `file_path` |
+| `definitions_with_path` | All definitions joined with their file path |
+| `refs_with_path` | All references joined with their file path |
+| `imports_with_path` | All imports joined with their file path |
+| `calls_with_context` | Calls with file paths for caller and callee |
+| `class_hierarchy` | Classes with their base classes (one row per base) |
+| `decorated_definitions` | Definitions with decorators (one row per decorator) |
+
+**Examples using views:**
+```sql
+-- Find all async functions
+SELECT name, file_path FROM functions WHERE name LIKE 'async_%';
+
+-- Find all classes inheriting from Model
+SELECT class_full_name, file_path FROM class_hierarchy
+WHERE base_full_name LIKE '%Model';
+
+-- Find all @pytest.fixture functions
+SELECT full_name, file_path FROM decorated_definitions
+WHERE decorator_name = 'fixture';
+
+-- What calls are made from test files?
+SELECT caller_full_name, callee_full_name FROM calls_with_context
+WHERE file_path LIKE '%test_%';
+```
+
+## What You Can Discover
+
+JediDB's SQL interface lets you answer questions about your codebase that would be tedious to figure out manually. Here are some examples:
+
+**Finding code patterns:**
+- All classes that inherit from a specific base class
+- Functions decorated with `@property`, `@staticmethod`, `@cached_property`, etc.
+- All usages of a deprecated function
+- Where a class is instantiated throughout the codebase
+- Private methods (`_name`) vs public methods in a class
+- Module-level functions (not inside classes)
+
+**Understanding structure:**
+- The largest functions by line count
+- Classes with the most methods
+- Files with the most definitions
+- The full class hierarchy for a module
+- Nested classes and inner functions
+
+**Dependency analysis:**
+- What functions does `MyClass.__init__` call, in execution order?
+- Who calls a specific function? (reverse call graph)
+- What external modules does a file import?
+- Functions that are defined but never called (dead code candidates)
+- The most-referenced functions in the codebase
+
+**Code quality insights:**
+- Functions without docstrings
+- Very long functions (potential refactoring targets)
+- Deeply nested call chains
+- Classes that might be doing too much
+
+**Navigation:**
+- Jump from a function name to its full source code
+- See call sites with surrounding context
+- Follow call chains: A calls B calls C
+
+**Filtering at query time vs index time:**
+
+The `--include` and `--exclude` options control what gets indexed. But you can also index everything and filter later with SQL. This is useful when you want to:
+- Normally ignore test files, but occasionally explore them
+- Find pytest tests by looking for classes inheriting from `unittest.TestCase`
+- Compare production code vs test code patterns
+- Search test files for usage examples of your APIs
+
+```sql
+-- Find functions only in test files
+SELECT name, full_name FROM definitions d
+JOIN files f ON d.file_id = f.id
+WHERE f.path LIKE '%test_%' AND d.type = 'function';
+
+-- Find non-test code that calls a specific function
+SELECT c.caller_full_name, f.path FROM calls c
+JOIN files f ON c.file_id = f.id
+WHERE c.callee_full_name = 'mymodule.my_function'
+  AND f.path NOT LIKE '%test_%';
+```
+
+Most of these are one-liners with `jedidb query`, and the SQL is simple enough that LLMs can easily write these queries for you—just describe what you're looking for. A few more examples:
 
 ## Example Queries
 
@@ -389,6 +575,11 @@ WHERE parent_full_name = 'mymodule.MyClass';
 SELECT d.full_name FROM definitions d
 JOIN decorators dec ON dec.definition_id = d.id
 WHERE dec.name = 'property';
+
+-- Classes that inherit from a specific base
+SELECT d.full_name FROM definitions d
+JOIN class_bases cb ON cb.class_id = d.id
+WHERE cb.base_full_name = 'django.db.models.Model';
 
 -- Largest functions by line count
 SELECT full_name, (end_line - line) as lines FROM definitions
