@@ -1,10 +1,10 @@
 # JediDB
 
-Python code index with Jedi analysis and full-text search.
+An experimental Python code indexer with Jedi analysis and full-text search.
 
 ## Why JediDB?
 
-Built for **LLM-assisted code exploration**. Unlike embedding-based tools, JediDB uses [Jedi](https://github.com/davidhalter/jedi) for real Python semantic analysis - the same engine that powers IDE autocompletion.
+This program, JediDB, is an experiment built to help **LLMs explore Python code**. Unlike embedding-based tools, JediDB uses [Jedi](https://github.com/davidhalter/jedi) for real Python semantic analysis - the same engine that powers IDE autocompletion. The results are stored in Parquet files and searched/queried with DuckDB, including full text search.
 
 | Feature | JediDB | Embedding tools | Call graph tools |
 |---------|--------|-----------------|------------------|
@@ -16,7 +16,7 @@ Built for **LLM-assisted code exploration**. Unlike embedding-based tools, JediD
 | Structured JSON output | Auto-detected | Varies | No |
 | No external services | Yes | Often needs Ollama/API | Yes |
 
-**One tool** for search, source viewing, call navigation, and custom SQL queries - all with CLI-friendly JSON output.
+**One tool** for search, source viewing, call navigation, and custom SQL queries - all with CLI-friendly table or JSON output.
 
 ## What Can JediDB Do?
 
@@ -36,7 +36,7 @@ jedidb source --help
 
 ## Features
 
-- **Jedi-Powered Analysis**: Real Python semantic analysis - definitions, references, imports, decorators
+- **Jedi-Powered Analysis**: Python semantic analysis - definitions, references, imports, decorators, inheritance
 - **Call Graphs**: Caller/callee relationships with execution order tracking
 - **Source Display**: View actual source code with line numbers and configurable context
 - **Full-Text Search**: BM25 ranking with CamelCase/snake_case tokenization
@@ -44,8 +44,8 @@ jedidb source --help
 - **Smart Re-indexing**: Skips if nothing changed, full re-index if anything changed
 - **SQL Interface**: Query the index directly with DuckDB SQL
 - **LLM-Friendly Output**: Auto-detects terminal vs pipe, outputs JSON/JSONL for tooling
-- **Lightweight Storage**: Parquet files with zstd compression (~1.5MB for 24K definitions)
-- **Zero Dependencies**: No cloud services, no Ollama, no API keys
+- **Lightweight Storage**: Parquet files with zstd compression (~1.5MB for 24K definitions in the Diango code base)
+- **Zero Cloud Dependencies**: No cloud services, no Ollama, no API keys
 
 ## Installation
 
