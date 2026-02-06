@@ -16,7 +16,7 @@ from jedidb.utils import (
 
 
 class Indexer:
-    """Handles incremental indexing of Python files."""
+    """Handles indexing of Python files."""
 
     def __init__(
         self,
@@ -38,6 +38,64 @@ class Indexer:
         self.progress_callback = progress_callback
         self.resolve_refs = resolve_refs
 
+    def check_staleness(
+        self,
+        paths: list[str] | None = None,
+        include: list[str] | None = None,
+        exclude: list[str] | None = None,
+        base_path: Path | None = None,
+    ) -> dict:
+        """Check if the index is stale (any files changed, added, or removed).
+
+        Args:
+            paths: Specific paths to check. If None, uses base_path or current directory.
+            include: Glob patterns to include
+            exclude: Glob patterns to exclude
+            base_path: Base path for relative path storage
+
+        Returns:
+            Dictionary with staleness information:
+            - is_stale: True if any changes detected
+            - changed: List of files with different content
+            - added: List of new files not in index
+            - removed: List of indexed files no longer on disk
+        """
+        if base_path is None:
+            base_path = self.analyzer.project_path or Path.cwd()
+
+        # Discover current files on disk
+        disk_files = self._discover_files(paths, include, exclude, base_path)
+        disk_paths = {normalize_path(f, base_path): f for f in disk_files}
+
+        # Get indexed files from database
+        result = self.db.execute("SELECT path, hash FROM files").fetchall()
+        db_files = {row[0]: row[1] for row in result}
+
+        changed = []
+        added = []
+        removed = []
+
+        # Check for changed and new files
+        for rel_path, abs_path in disk_paths.items():
+            if rel_path in db_files:
+                current_hash = compute_file_hash(abs_path)
+                if current_hash != db_files[rel_path]:
+                    changed.append(rel_path)
+            else:
+                added.append(rel_path)
+
+        # Check for removed files
+        for db_path in db_files:
+            if db_path not in disk_paths:
+                removed.append(db_path)
+
+        return {
+            "is_stale": bool(changed or added or removed),
+            "changed": changed,
+            "added": added,
+            "removed": removed,
+        }
+
     def index(
         self,
         paths: list[str] | None = None,
@@ -48,11 +106,15 @@ class Indexer:
     ) -> dict:
         """Index Python files.
 
+        Uses all-or-nothing indexing: if any files have changed, all files are
+        re-indexed to ensure cross-file references are consistent. If nothing
+        has changed, indexing is skipped entirely.
+
         Args:
             paths: Specific paths to index. If None, uses base_path or current directory.
             include: Glob patterns to include
             exclude: Glob patterns to exclude
-            force: Force re-indexing even if files haven't changed
+            force: Force re-indexing even if no files have changed
             base_path: Base path for relative path storage
 
         Returns:
@@ -74,9 +136,21 @@ class Indexer:
             "decorators_added": 0,
             "class_bases_added": 0,
             "errors": [],
+            "index_skipped": False,
         }
 
         total_files = len(files_to_index)
+
+        # Check staleness first (unless force)
+        if not force:
+            staleness = self.check_staleness(paths, include, exclude, base_path)
+            if not staleness["is_stale"]:
+                # Nothing changed, skip indexing entirely
+                stats["files_skipped"] = total_files
+                stats["index_skipped"] = True
+                return stats
+
+        # Something changed (or force) - do full re-index
         indexed_paths = set()
 
         for i, file_path in enumerate(files_to_index):
@@ -87,7 +161,8 @@ class Indexer:
             indexed_paths.add(rel_path)
 
             try:
-                file_stats = self._index_file(file_path, rel_path, force)
+                # Always force=True for individual files since we're doing full re-index
+                file_stats = self._index_file(file_path, rel_path, force=True)
                 if file_stats["indexed"]:
                     stats["files_indexed"] += 1
                     stats["definitions_added"] += file_stats["definitions"]
@@ -100,8 +175,8 @@ class Indexer:
             except Exception as e:
                 stats["errors"].append({"file": str(file_path), "error": str(e)})
 
-        # Remove deleted files (and excluded files when force=True)
-        stats["files_removed"] = self._cleanup_deleted_files(indexed_paths, base_path, force)
+        # Remove files no longer in scope
+        stats["files_removed"] = self._cleanup_deleted_files(indexed_paths, base_path, force=True)
 
         # Post-processing: populate parent_ids and build call graph
         if stats["files_indexed"] > 0 or stats["files_removed"] > 0:

@@ -41,11 +41,10 @@ jedidb source --help
 - **Source Display**: View actual source code with line numbers and configurable context
 - **Full-Text Search**: BM25 ranking with CamelCase/snake_case tokenization
 - **Wildcard Search**: Prefix (`get*`), suffix (`*Engine`), and pattern (`get*path`) matching
-- **Watch Mode**: Automatically reindex files when they change
+- **Smart Re-indexing**: Skips if nothing changed, full re-index if anything changed
 - **SQL Interface**: Query the index directly with DuckDB SQL
 - **LLM-Friendly Output**: Auto-detects terminal vs pipe, outputs JSON/JSONL for tooling
 - **Lightweight Storage**: Parquet files with zstd compression (~1.5MB for 24K definitions)
-- **Incremental Updates**: Only re-indexes changed files
 - **Zero Dependencies**: No cloud services, no Ollama, no API keys
 
 ## Installation
@@ -79,9 +78,6 @@ jedidb index
 # Or initialize with exclude patterns (e.g., skip test files)
 jedidb init --exclude test_ --exclude _test
 
-# Watch for changes and reindex automatically
-jedidb index --watch
-
 # Search
 jedidb search parse                    # full-text search
 jedidb search "get*"                   # prefix search
@@ -108,7 +104,7 @@ jedidb [-C DIR] COMMAND
 
 Commands:
   init     Initialize jedidb in a project
-  index    Index Python files (incremental by default)
+  index    Index Python files (full re-index if anything changed)
   search   Full-text search definitions
   query    Run raw SQL queries
   show     Show details for a definition
@@ -143,41 +139,20 @@ jedidb index [OPTIONS] [PATHS]...
 Options:
   -i, --include PATTERN              Patterns to include (combined with config)
   -e, --exclude PATTERN              Patterns to exclude (combined with config)
-  -f, --force                        Force re-index all files
+  -f, --force                        Force re-index even if nothing changed
+  -c, --check                        Check if stale without indexing (exit 0=ok, 1=stale)
+  -v, --verbose                      Show changed files (with --check)
   -q, --quiet                        Suppress progress output
-  -w, --watch                        Watch for changes and reindex automatically
   -r, --resolve-refs (default)       Resolve reference targets (enables call graph)
   -R, --no-resolve-refs              Skip reference resolution (faster indexing)
   -C, --project                      Project directory
 ```
 
+Indexing uses all-or-nothing semantics: if any files have changed, all files are re-indexed to ensure cross-file references are consistent. If nothing has changed, indexing is skipped entirely. Use `--check` to see what changed without indexing.
+
 Patterns use simplified syntax: `Testing` matches directories, `test_` matches file prefixes, `_test` matches suffixes. Full globs like `**/test_*.py` also work. See [Include/Exclude Patterns](#includeexclude-patterns) for details.
 
 Reference resolution is enabled by default, building the call graph. Use `--no-resolve-refs` / `-R` for faster indexing if you don't need caller/callee queries (~30% faster).
-
-### Watch Mode
-
-Watch mode monitors your source directory for file changes and automatically reindexes:
-
-```bash
-jedidb index --watch              # Index, then watch for changes
-jedidb index --watch --quiet      # Watch with minimal output
-```
-
-When a Python file is modified, added, or deleted:
-- **Modified/Added**: The file is reindexed incrementally
-- **Deleted**: The file is removed from the index
-
-The watcher respects your exclude patterns from both command-line (`--exclude`) and config file. Press `Ctrl+C` to stop watching.
-
-Example output:
-```
-Watching /path/to/project for changes... (Ctrl+C to stop)
-[14:32:15] Changed: mymodule.py
-OK: Indexed 1 file(s)
-[14:33:02] Deleted: old_file.py
-OK: Removed 1 file(s)
-```
 
 ### calls
 
@@ -434,7 +409,6 @@ WHERE r.id IS NULL AND d.type IN ('function', 'class');
 - duckdb >= 1.0.0
 - typer >= 0.12.0
 - rich >= 13.0.0
-- watchfiles >= 0.20.0
 
 ## Caveats
 
