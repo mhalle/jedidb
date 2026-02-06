@@ -534,17 +534,39 @@ JediDB's SQL interface lets you answer questions about your codebase that would 
 
 **Filtering at query time vs index time:**
 
-The `--include` and `--exclude` options control what gets indexed. But you can also index everything and filter later with SQL. This is useful when you want to:
-- Normally ignore test files, but occasionally explore them
-- Find pytest tests by looking for classes inheriting from `unittest.TestCase`
-- Compare production code vs test code patterns
-- Search test files for usage examples of your APIs
+The `--include` and `--exclude` options control what gets indexed. But you can also index everything and filter later with SQL.
+
+**The tradeoff:** You pay only at index time (storage and indexing duration), not at query time. DuckDB handles hundreds of thousands of rows with no noticeable query slowdown—FTS searches take ~30-40ms regardless of index size.
+
+| Metric | Without Tests | With Tests | Cost |
+|--------|---------------|------------|------|
+| Files (Django) | 860 | 2,887 | 3.4x |
+| Definitions | 20K | 192K | 9.4x |
+| Index size | ~1.5 MB | ~17 MB | 11x |
+| Query time | ~30ms | ~30ms | **None** |
+
+**Why index tests?** Having tests in the index unlocks valuable insights:
+- **API usage examples**: See how functions are actually called in test code
+- **Test coverage**: Which classes have the most test cases?
+- **Common patterns**: What assertions are used most? (`assertEqual`: 18K uses in Django)
+- **Compare test vs prod**: Different coding patterns in each?
+
+**Filtering is trivial**: Add `WHERE file_path NOT LIKE '%tests%'` to exclude tests from any query. You get the same results as excluding at index time, but retain the flexibility to include tests when useful.
 
 ```sql
--- Find functions only in test files
-SELECT name, full_name FROM definitions d
-JOIN files f ON d.file_id = f.id
-WHERE f.path LIKE '%test_%' AND d.type = 'function';
+-- Production code only (exclude tests)
+SELECT name, full_name FROM definitions_with_path
+WHERE file_path NOT LIKE '%tests%' AND type = 'function';
+
+-- Find API usage examples in test files
+SELECT context FROM calls_with_context
+WHERE callee_name = 'JsonResponse' AND file_path LIKE '%tests%';
+
+-- Compare test vs production code
+SELECT
+  CASE WHEN file_path LIKE '%tests%' THEN 'test' ELSE 'prod' END as category,
+  COUNT(*) as definitions
+FROM definitions_with_path GROUP BY 1;
 
 -- Find non-test code that calls a specific function
 SELECT c.caller_full_name, f.path FROM calls c
