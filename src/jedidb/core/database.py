@@ -155,6 +155,7 @@ class Database:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: duckdb.DuckDBPyConnection | None = None
         self._fts_initialized = False
+        self._fts_available = True  # assume available until proven otherwise
 
     @property
     def conn(self) -> duckdb.DuckDBPyConnection:
@@ -169,7 +170,11 @@ class Database:
         self.conn.execute(SCHEMA_SQL)
 
     def init_fts(self):
-        """Initialize full-text search extension."""
+        """Initialize full-text search extension.
+
+        Sets _fts_available to False if the extension cannot be loaded,
+        allowing callers to skip FTS and use LIKE-based fallback.
+        """
         if self._fts_initialized:
             return
 
@@ -177,13 +182,18 @@ class Database:
             self.conn.execute(FTS_SETUP_SQL)
             self._fts_initialized = True
         except duckdb.Error as e:
-            # FTS extension might already be loaded, or not available
-            logger.debug("FTS initialization: %s", e)
+            logger.debug("FTS extension not available: %s", e)
             self._fts_initialized = True
+            self._fts_available = False
 
     def create_fts_index(self):
-        """Create or recreate the FTS index on definitions.search_text."""
+        """Create or recreate the FTS index on definitions.search_text.
+
+        No-op if the FTS extension is not available.
+        """
         self.init_fts()
+        if not self._fts_available:
+            return
 
         # Drop existing FTS index if it exists
         try:
@@ -626,6 +636,7 @@ class Database:
         db.db_path = parquet_dir / "jedidb.duckdb"  # For reference only
         db._conn = duckdb.connect(":memory:")
         db._fts_initialized = False
+        db._fts_available = True
 
         # Set the parquet directory variable
         safe_dir = str(parquet_dir).replace("'", "''")
@@ -669,5 +680,17 @@ class Database:
         # Create index for call ordering queries (after ALTER statements to avoid dependency issues)
         db._conn.execute("CREATE INDEX IF NOT EXISTS idx_calls_caller_order ON calls(caller_full_name, call_order)")
 
-        db._fts_initialized = True
+        # Attempt to load FTS extension and create index; fall back to LIKE search if unavailable
+        try:
+            db._conn.execute("INSTALL fts")
+            db._conn.execute("LOAD fts")
+            db._conn.execute(
+                "PRAGMA create_fts_index('definitions', 'id', 'search_text', stemmer='none', stopwords='none')"
+            )
+            db._fts_initialized = True
+        except duckdb.Error as e:
+            logger.debug("FTS extension not available, LIKE search will be used: %s", e)
+            db._fts_initialized = True
+            db._fts_available = False
+
         return db

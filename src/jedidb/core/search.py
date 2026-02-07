@@ -48,6 +48,9 @@ class SearchEngine:
             return self._wildcard_search(query, type, limit, include_private)
 
         # Word/phrase search: try FTS first, fall back to LIKE
+        if not self.db._fts_available:
+            return self._like_search(query, type, limit, include_private)
+
         try:
             return self._fts_search(query, type, limit, include_private)
         except duckdb.Error as e:

@@ -32,18 +32,10 @@ CREATE TABLE IF NOT EXISTS class_bases (
 CREATE OR REPLACE TABLE calls AS
 SELECT * FROM read_parquet(getvariable('parquet_dir') || '/calls.parquet');
 
--- Install and load FTS extension
-INSTALL fts;
-LOAD fts;
-
--- Create FTS index on definitions (search_text contains original + split tokens + docstring)
-PRAGMA create_fts_index(
-    'definitions',
-    'id',
-    'search_text',
-    stemmer = 'none',
-    stopwords = 'none'
-);
+-- Note: FTS extension (INSTALL fts; LOAD fts; PRAGMA create_fts_index) is
+-- initialized separately in Python (open_parquet) so that a missing or
+-- unavailable extension does not block database loading. Search falls back
+-- to LIKE-based matching when FTS is not available.
 
 -- Convenience views for common queries
 
