@@ -4,7 +4,7 @@ description: Explores Python codebases using JediDB semantic analysis. Indexes d
 license: Apache-2.0
 metadata:
   author: mhalle
-  version: "0.4.1"
+  version: "0.4.2"
 compatibility: Requires Python 3.12+, jedidb package. Works with Claude Code and similar agents.
 ---
 

@@ -1,6 +1,6 @@
 [project]
 name = "jedidb"
-version = "0.4.1"
+version = "0.4.2"
 description = "Python code index with Jedi analysis and full-text search"
 readme = "README.md"
 license = "Apache-2.0"
