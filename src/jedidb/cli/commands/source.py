@@ -110,41 +110,38 @@ def source_cmd(
         print_error(f"Failed to open database: {e}")
         raise typer.Exit(1)
 
-    # Handle --all: list all matching definitions
-    if all_matches:
-        if not name:
-            jedidb.close()
-            print_error("--all requires a NAME argument")
-            raise typer.Exit(1)
-        _list_all_definitions(jedidb, name, output_format, output)
+    try:
+        # Handle --all: list all matching definitions
+        if all_matches:
+            if not name:
+                print_error("--all requires a NAME argument")
+                raise typer.Exit(1)
+            _list_all_definitions(jedidb, name, output_format, output)
+            raise typer.Exit(0)
+
+        # Find the definition by ID or name
+        if id is not None:
+            definition = jedidb.search_engine.get_definition_by_id(id)
+            if not definition:
+                print_error(f"Definition not found with ID: {id}")
+                raise typer.Exit(1)
+        else:
+            definition = jedidb.search_engine.get_definition(name)
+            if not definition:
+                print_error(f"Definition not found: {name}")
+                raise typer.Exit(1)
+
+        # Resolve file path
+        file_path = _resolve_file_path(definition.file_path, source_root)
+
+        if calls:
+            _show_calls(jedidb, definition, source_root, context, output_format, output)
+        elif refs:
+            _show_refs(jedidb, definition, source_root, context, output_format, output)
+        else:
+            _show_definition(definition, file_path, context, output_format, output)
+    finally:
         jedidb.close()
-        raise typer.Exit(0)
-
-    # Find the definition by ID or name
-    if id is not None:
-        definition = jedidb.search_engine.get_definition_by_id(id)
-        if not definition:
-            jedidb.close()
-            print_error(f"Definition not found with ID: {id}")
-            raise typer.Exit(1)
-    else:
-        definition = jedidb.search_engine.get_definition(name)
-        if not definition:
-            jedidb.close()
-            print_error(f"Definition not found: {name}")
-            raise typer.Exit(1)
-
-    # Resolve file path
-    file_path = _resolve_file_path(definition.file_path, source_root)
-
-    if calls:
-        _show_calls(jedidb, definition, source_root, context, output_format, output)
-    elif refs:
-        _show_refs(jedidb, definition, source_root, context, output_format, output)
-    else:
-        _show_definition(definition, file_path, context, output_format, output)
-
-    jedidb.close()
 
 
 def _resolve_file_path(file_path: str | None, source_root: Path) -> Path | None:
@@ -415,7 +412,7 @@ def _show_refs(
     output: Path | None,
 ):
     """Show references to a definition with source context."""
-    references = jedidb.search_engine.find_references(definition.name)
+    references = jedidb.search_engine.find_references(definition.full_name or definition.name)
 
     if not references:
         print_info(f"No references found for {definition.name}")

@@ -94,14 +94,16 @@ def index_cmd(
             print_error(f"Failed to open database: {e}")
             raise typer.Exit(1)
 
-        all_include = list(include or []) + jedidb.config.include_patterns
-        all_exclude = list(exclude or []) + jedidb.config.exclude_patterns
+        try:
+            all_include = list(include or []) + jedidb.config.include_patterns
+            all_exclude = list(exclude or []) + jedidb.config.exclude_patterns
 
-        staleness = jedidb.indexer.check_staleness(
-            include=all_include if all_include else None,
-            exclude=all_exclude if all_exclude else None,
-        )
-        jedidb.close()
+            staleness = jedidb.indexer.check_staleness(
+                include=all_include if all_include else None,
+                exclude=all_exclude if all_exclude else None,
+            )
+        finally:
+            jedidb.close()
 
         if not staleness["is_stale"]:
             print_success("Index is up-to-date")
@@ -168,22 +170,35 @@ def index_cmd(
     # Use Rich progress bar only for TTY, otherwise simple text
     use_progress_bar = not quiet and sys.stderr.isatty()
 
-    if use_progress_bar:
-        from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
-        from rich.console import Console
+    try:
+        if use_progress_bar:
+            from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+            from rich.console import Console
 
-        console = Console(stderr=True)
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Indexing files...", total=None)
+            console = Console(stderr=True)
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("Indexing files...", total=None)
 
+                def on_progress(file_path: str, current: int, total: int):
+                    progress.update(task, total=total, completed=current, description=f"Indexing: {Path(file_path).name}")
+
+                jedidb.indexer.progress_callback = on_progress
+
+                stats = jedidb.index_files(
+                    paths=paths,
+                    include=all_include if all_include else None,
+                    exclude=all_exclude if all_exclude else None,
+                    force=force,
+                )
+        elif not quiet:
             def on_progress(file_path: str, current: int, total: int):
-                progress.update(task, total=total, completed=current, description=f"Indexing: {Path(file_path).name}")
+                print(f"Indexing [{current}/{total}]: {Path(file_path).name}", file=sys.stderr)
 
             jedidb.indexer.progress_callback = on_progress
 
@@ -193,32 +208,21 @@ def index_cmd(
                 exclude=all_exclude if all_exclude else None,
                 force=force,
             )
-    elif not quiet:
-        def on_progress(file_path: str, current: int, total: int):
-            print(f"Indexing [{current}/{total}]: {Path(file_path).name}", file=sys.stderr)
-
-        jedidb.indexer.progress_callback = on_progress
-
-        stats = jedidb.index_files(
-            paths=paths,
-            include=all_include if all_include else None,
-            exclude=all_exclude if all_exclude else None,
-            force=force,
-        )
-    else:
-        stats = jedidb.index_files(
-            paths=paths,
-            include=all_include if all_include else None,
-            exclude=all_exclude if all_exclude else None,
-            force=force,
-        )
+        else:
+            stats = jedidb.index_files(
+                paths=paths,
+                include=all_include if all_include else None,
+                exclude=all_exclude if all_exclude else None,
+                force=force,
+            )
+    finally:
+        jedidb.close()
 
     # Print results
     print()
 
     if stats.get("index_skipped"):
         print_success(f"Index is up-to-date ({stats['files_skipped']} files)")
-        jedidb.close()
         return
 
     print_success(f"Indexed {stats['files_indexed']} files")
@@ -241,5 +245,3 @@ def index_cmd(
             print(f"  {err['file']}: {err['error']}", file=sys.stderr)
         if len(stats["errors"]) > 5:
             print(f"  ... and {len(stats['errors']) - 5} more", file=sys.stderr)
-
-    jedidb.close()

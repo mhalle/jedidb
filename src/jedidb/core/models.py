@@ -47,8 +47,30 @@ class Definition:
     def __post_init__(self):
         if self.full_name is None:
             self.full_name = self.name
-        if self.name:
-            self.is_public = not self.name.startswith("_")
+
+    @classmethod
+    def from_row(cls, row: tuple) -> "Definition":
+        """Create a Definition from a standard database query row.
+
+        Expected columns: id, file_id, name, full_name, type, line, col,
+        end_line, end_col, signature, docstring, parent_id, is_public[, file_path]
+        """
+        return cls(
+            id=row[0],
+            file_id=row[1],
+            name=row[2],
+            full_name=row[3],
+            type=row[4],
+            line=row[5],
+            column=row[6],
+            end_line=row[7],
+            end_column=row[8],
+            signature=row[9],
+            docstring=row[10],
+            parent_id=row[11],
+            is_public=row[12],
+            file_path=row[13] if len(row) > 13 else None,
+        )
 
 
 @dataclass

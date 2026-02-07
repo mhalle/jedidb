@@ -70,20 +70,20 @@ class TestViews:
         results = indexed_project.query(
             "SELECT name, file_path FROM functions ORDER BY name"
         )
-        names = [r[0] for r in results]
+        names = [r["name"] for r in results]
 
         assert "helper_function" in names
         assert "save" in names
         assert "__init__" in names
         # Verify file_path is included
-        assert all(r[1].endswith("models.py") for r in results)
+        assert all(r["file_path"].endswith("models.py") for r in results)
 
     def test_classes_view(self, indexed_project):
         """Test the classes view."""
         results = indexed_project.query(
             "SELECT name, file_path FROM classes ORDER BY name"
         )
-        names = [r[0] for r in results]
+        names = [r["name"] for r in results]
 
         assert "BaseModel" in names
         assert "User" in names
@@ -96,7 +96,7 @@ class TestViews:
         )
 
         assert len(results) == 2
-        assert all(r[2].endswith("models.py") for r in results)
+        assert all(r["file_path"].endswith("models.py") for r in results)
 
     def test_class_hierarchy_view(self, indexed_project):
         """Test the class_hierarchy view."""
@@ -105,7 +105,7 @@ class TestViews:
         )
 
         # User inherits from BaseModel
-        assert any(r[0] == "User" and r[1] == "BaseModel" for r in results)
+        assert any(r["class_name"] == "User" and r["base_name"] == "BaseModel" for r in results)
 
     def test_decorated_definitions_view(self, indexed_project):
         """Test the decorated_definitions view."""
@@ -113,7 +113,7 @@ class TestViews:
             "SELECT name, decorator_name FROM decorated_definitions ORDER BY name"
         )
 
-        decorators = {r[0]: r[1] for r in results}
+        decorators = {r["name"]: r["decorator_name"] for r in results}
         assert decorators.get("display_name") == "property"
         assert decorators.get("create") == "staticmethod"
 
@@ -124,7 +124,7 @@ class TestViews:
         )
 
         # helper_function calls User() and user.save()
-        callee_names = [r[1] for r in results]
+        callee_names = [r["callee_name"] for r in results]
         assert "User" in callee_names or "save" in callee_names
 
     def test_refs_with_path_view(self, indexed_project):
@@ -134,12 +134,12 @@ class TestViews:
         )
 
         assert len(results) > 0
-        assert all(r[1].endswith("models.py") for r in results)
+        assert all(r["file_path"].endswith("models.py") for r in results)
 
     def test_imports_with_path_view(self, indexed_project):
         """Test the imports_with_path view exists and works."""
         # Just verify the view exists and can be queried
         results = indexed_project.query(
-            "SELECT COUNT(*) FROM imports_with_path"
+            "SELECT COUNT(*) as cnt FROM imports_with_path"
         )
-        assert results[0][0] >= 0  # May be 0 if no imports
+        assert results[0]["cnt"] >= 0  # May be 0 if no imports

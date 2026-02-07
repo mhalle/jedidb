@@ -28,8 +28,10 @@ def stats_cmd(
         print_error(f"Failed to open database: {e}")
         raise typer.Exit(1)
 
-    stats = jedidb.stats()
-    jedidb.close()
+    try:
+        stats = jedidb.stats()
+    finally:
+        jedidb.close()
 
     if output_format == "json":
         # Convert datetime to string for JSON

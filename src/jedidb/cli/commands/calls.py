@@ -135,63 +135,69 @@ def calls_cmd(
         print_error(f"Failed to open database: {e}")
         raise typer.Exit(1)
 
-    # Find the function
-    definition = jedidb.search_engine.get_definition(name)
+    try:
+        # Find the function
+        definition = jedidb.search_engine.get_definition(name)
 
-    if not definition:
+        if not definition:
+            print_error(f"Definition not found: {name}")
+            raise typer.Exit(1)
+
+        if definition.type not in ("function", "class"):
+            print_error(f"'{name}' is a {definition.type}, not a function or class")
+            raise typer.Exit(1)
+
+        # Build query for calls
+        depth_filter = "AND call_depth = 1" if top_level else ""
+
+        visited = set()
+
+        def get_calls_for_function(full_name: str, current_depth: int = 1) -> list[dict]:
+            """Get calls for a function, optionally recursing into callees."""
+            if full_name in visited:
+                return []
+            visited.add(full_name)
+
+            # Use DISTINCT to avoid duplicates from refs matching multiple enclosing definitions
+            query = f"""
+                SELECT DISTINCT
+                    callee_full_name,
+                    callee_name,
+                    line,
+                    col,
+                    context,
+                    call_order,
+                    call_depth
+                FROM calls
+                WHERE caller_full_name = ?
+                {depth_filter}
+                ORDER BY call_order
+            """
+            results = jedidb.db.execute(query, (full_name,)).fetchall()
+
+            calls = []
+            for r in results:
+                call = {
+                    "callee_full_name": r[0],
+                    "callee_name": r[1],
+                    "line": r[2],
+                    "col": r[3],
+                    "context": r[4],
+                    "call_order": r[5],
+                    "call_depth": r[6],
+                }
+
+                # Recurse if requested and callee is resolved
+                if current_depth < depth and r[0]:
+                    call["nested_calls"] = get_calls_for_function(r[0], current_depth + 1)
+
+                calls.append(call)
+
+            return calls
+
+        calls = get_calls_for_function(definition.full_name)
+    finally:
         jedidb.close()
-        print_error(f"Definition not found: {name}")
-        raise typer.Exit(1)
-
-    if definition.type not in ("function", "class"):
-        jedidb.close()
-        print_error(f"'{name}' is a {definition.type}, not a function or class")
-        raise typer.Exit(1)
-
-    # Build query for calls
-    depth_filter = "AND call_depth = 1" if top_level else ""
-
-    def get_calls_for_function(full_name: str, current_depth: int = 1) -> list[dict]:
-        """Get calls for a function, optionally recursing into callees."""
-        # Use DISTINCT to avoid duplicates from refs matching multiple enclosing definitions
-        query = f"""
-            SELECT DISTINCT
-                callee_full_name,
-                callee_name,
-                line,
-                col,
-                context,
-                call_order,
-                call_depth
-            FROM calls
-            WHERE caller_full_name = ?
-            {depth_filter}
-            ORDER BY call_order
-        """
-        results = jedidb.db.execute(query, (full_name,)).fetchall()
-
-        calls = []
-        for r in results:
-            call = {
-                "callee_full_name": r[0],
-                "callee_name": r[1],
-                "line": r[2],
-                "col": r[3],
-                "context": r[4],
-                "call_order": r[5],
-                "call_depth": r[6],
-            }
-
-            # Recurse if requested and callee is resolved
-            if current_depth < depth and r[0]:
-                call["nested_calls"] = get_calls_for_function(r[0], current_depth + 1)
-
-            calls.append(call)
-
-        return calls
-
-    calls = get_calls_for_function(definition.full_name)
-    jedidb.close()
 
     if not calls:
         print_info(f"No calls found in {definition.full_name}")

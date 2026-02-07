@@ -68,8 +68,8 @@ class TestAnalyzer:
 
         ref_names = [r.name for r in references]
 
-        # Should have references to 'self', 'value', etc.
-        assert len(references) >= 0  # References may vary by Jedi version
+        # Should have at least some references (self, value, etc.)
+        assert len(references) > 0
 
     def test_analyze_invalid_file(self, temp_dir, analyzer):
         """Test analyzing a non-existent file."""
@@ -77,17 +77,13 @@ class TestAnalyzer:
             analyzer.analyze_file(temp_dir / "nonexistent.py")
 
     def test_analyze_syntax_error(self, temp_dir, analyzer):
-        """Test analyzing a file with syntax errors."""
+        """Test analyzing a file with syntax errors still returns results."""
         bad_file = temp_dir / "bad.py"
         bad_file.write_text("def foo(\n")  # Incomplete syntax
 
-        # Should either return empty results or raise an error
-        try:
-            definitions, _, _, _, _ = analyzer.analyze_file(bad_file)
-            # If it doesn't raise, it should return something reasonable
-            assert isinstance(definitions, list)
-        except ValueError:
-            pass  # This is also acceptable
+        # Jedi is tolerant of syntax errors - should return results, not raise
+        definitions, _, _, _, _ = analyzer.analyze_file(bad_file)
+        assert isinstance(definitions, list)
 
     def test_get_completions(self, sample_python_file, analyzer):
         """Test getting completions."""

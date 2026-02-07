@@ -48,6 +48,9 @@ class SearchEngine:
             return self._wildcard_search(query, type, limit, include_private)
 
         # Word/phrase search: try FTS first, fall back to LIKE
+        if not self.db._fts_available:
+            return self._like_search(query, type, limit, include_private)
+
         try:
             return self._fts_search(query, type, limit, include_private)
         except duckdb.Error as e:
@@ -132,22 +135,7 @@ class SearchEngine:
 
         return [
             SearchResult(
-                definition=Definition(
-                    id=r[0],
-                    file_id=r[1],
-                    name=r[2],
-                    full_name=r[3],
-                    type=r[4],
-                    line=r[5],
-                    column=r[6],
-                    end_line=r[7],
-                    end_column=r[8],
-                    signature=r[9],
-                    docstring=r[10],
-                    parent_id=r[11],
-                    is_public=r[12],
-                    file_path=r[13],
-                ),
+                definition=Definition.from_row(r),
                 score=1.0 if rank_prefix and r[2].lower() == rank_prefix else 0.5,
             )
             for r in results
@@ -162,7 +150,7 @@ class SearchEngine:
     ) -> list[SearchResult]:
         """Perform FTS search on search_text column."""
         # Ensure FTS is initialized
-        self.db._init_fts()
+        self.db.init_fts()
 
         # Tokenize query for better FTS matching (handles camelCase, snake_case)
         tokenized_query = split_identifier(query)
@@ -195,22 +183,7 @@ class SearchEngine:
 
         return [
             SearchResult(
-                definition=Definition(
-                    id=r[0],
-                    file_id=r[1],
-                    name=r[2],
-                    full_name=r[3],
-                    type=r[4],
-                    line=r[5],
-                    column=r[6],
-                    end_line=r[7],
-                    end_column=r[8],
-                    signature=r[9],
-                    docstring=r[10],
-                    parent_id=r[11],
-                    is_public=r[12],
-                    file_path=r[13],
-                ),
+                definition=Definition.from_row(r),
                 score=r[14] if r[14] else 0.0,
             )
             for r in results
@@ -236,7 +209,7 @@ class SearchEngine:
                 f.path
             FROM definitions d
             JOIN files f ON d.file_id = f.id
-            WHERE d.search_text LIKE ?
+            WHERE lower(d.search_text) LIKE ?
         """
         params = [search_term]
 
@@ -264,22 +237,7 @@ class SearchEngine:
 
         return [
             SearchResult(
-                definition=Definition(
-                    id=r[0],
-                    file_id=r[1],
-                    name=r[2],
-                    full_name=r[3],
-                    type=r[4],
-                    line=r[5],
-                    column=r[6],
-                    end_line=r[7],
-                    end_column=r[8],
-                    signature=r[9],
-                    docstring=r[10],
-                    parent_id=r[11],
-                    is_public=r[12],
-                    file_path=r[13],
-                ),
+                definition=Definition.from_row(r),
                 score=1.0 if r[2].lower() == query.lower() else 0.5,
             )
             for r in results
@@ -314,22 +272,7 @@ class SearchEngine:
         result = self.db.execute(sql, (name, name, name)).fetchone()
 
         if result:
-            return Definition(
-                id=result[0],
-                file_id=result[1],
-                name=result[2],
-                full_name=result[3],
-                type=result[4],
-                line=result[5],
-                column=result[6],
-                end_line=result[7],
-                end_column=result[8],
-                signature=result[9],
-                docstring=result[10],
-                parent_id=result[11],
-                is_public=result[12],
-                file_path=result[13],
-            )
+            return Definition.from_row(result)
         return None
 
     def get_definition_by_id(self, def_id: int) -> Definition | None:
@@ -355,43 +298,44 @@ class SearchEngine:
         result = self.db.execute(sql, (def_id,)).fetchone()
 
         if result:
-            return Definition(
-                id=result[0],
-                file_id=result[1],
-                name=result[2],
-                full_name=result[3],
-                type=result[4],
-                line=result[5],
-                column=result[6],
-                end_line=result[7],
-                end_column=result[8],
-                signature=result[9],
-                docstring=result[10],
-                parent_id=result[11],
-                is_public=result[12],
-                file_path=result[13],
-            )
+            return Definition.from_row(result)
         return None
 
     def find_references(self, name: str) -> list[Reference]:
-        """Find all references to a definition by name.
+        """Find all references to a definition by name or full name.
+
+        If name contains a dot (qualified name), matches against target_full_name
+        for precise results. Otherwise falls back to matching by short name.
 
         Args:
-            name: Name to find references for
+            name: Name or full name to find references for
 
         Returns:
             List of Reference objects
         """
-        sql = """
-            SELECT
-                r.id, r.file_id, r.definition_id, r.name,
-                r.line, r.col, r.context,
-                f.path
-            FROM refs r
-            JOIN files f ON r.file_id = f.id
-            WHERE r.name = ?
-            ORDER BY f.path, r.line
-        """
+        if "." in name:
+            # Qualified name — search by resolved target for precision
+            sql = """
+                SELECT
+                    r.id, r.file_id, r.definition_id, r.name,
+                    r.line, r.col, r.context,
+                    f.path
+                FROM refs r
+                JOIN files f ON r.file_id = f.id
+                WHERE r.target_full_name = ?
+                ORDER BY f.path, r.line
+            """
+        else:
+            sql = """
+                SELECT
+                    r.id, r.file_id, r.definition_id, r.name,
+                    r.line, r.col, r.context,
+                    f.path
+                FROM refs r
+                JOIN files f ON r.file_id = f.id
+                WHERE r.name = ?
+                ORDER BY f.path, r.line
+            """
 
         results = self.db.execute(sql, (name,)).fetchall()
 
@@ -452,22 +396,4 @@ class SearchEngine:
 
         results = self.db.execute(sql, params).fetchall()
 
-        return [
-            Definition(
-                id=r[0],
-                file_id=r[1],
-                name=r[2],
-                full_name=r[3],
-                type=r[4],
-                line=r[5],
-                column=r[6],
-                end_line=r[7],
-                end_column=r[8],
-                signature=r[9],
-                docstring=r[10],
-                parent_id=r[11],
-                is_public=r[12],
-                file_path=r[13],
-            )
-            for r in results
-        ]
+        return [Definition.from_row(r) for r in results]

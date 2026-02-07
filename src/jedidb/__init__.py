@@ -65,6 +65,8 @@ class JediDB:
     ) -> dict:
         """Index Python files in the project.
 
+        Patterns from config.toml are merged with explicit include/exclude args.
+
         Args:
             paths: Specific paths to index. If None, indexes source root.
             include: Glob patterns to include (e.g., ["src/**/*.py"])
@@ -74,10 +76,14 @@ class JediDB:
         Returns:
             Dictionary with indexing statistics
         """
+        # Merge caller-provided patterns with config patterns
+        all_include = list(include or []) + self.config.include_patterns
+        all_exclude = list(exclude or []) + self.config.exclude_patterns
+
         stats = self.indexer.index(
             paths=paths,
-            include=include,
-            exclude=exclude,
+            include=all_include if all_include else None,
+            exclude=all_exclude if all_exclude else None,
             force=force,
         )
 
@@ -142,7 +148,9 @@ class JediDB:
         Returns:
             List of result dictionaries
         """
-        return self.db.execute(sql).fetchall()
+        result = self.db.execute(sql)
+        columns = [desc[0] for desc in result.description] if result.description else []
+        return [dict(zip(columns, row)) for row in result.fetchall()]
 
     def stats(self) -> dict:
         """Get database statistics.

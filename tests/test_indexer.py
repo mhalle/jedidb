@@ -158,5 +158,5 @@ class TestIndexer:
 
         stats = indexer.index(paths=[str(bad_file)], base_path=temp_dir)
 
-        # Should have an error but not crash
-        assert len(stats["errors"]) >= 0  # May or may not error depending on handling
+        # Should have recorded an error for the bad file
+        assert len(stats["errors"]) > 0

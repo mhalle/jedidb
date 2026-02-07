@@ -167,8 +167,7 @@ class TestCLI:
             "-C", str(sample_project),
             "show", "helper_function",
         ])
-        # May or may not find depending on indexing
-        assert result.exit_code in [0, 1]
+        assert result.exit_code == 0
 
     def test_export_command(self, sample_project):
         """Test export command."""

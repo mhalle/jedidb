@@ -60,24 +60,26 @@ def clean_cmd(
         print_error("Try 'jedidb clean --all' to reset the database")
         raise typer.Exit(1)
 
-    if stale:
-        # Find files that no longer exist
-        result = jedidb.db.execute("SELECT id, path FROM files").fetchall()
-        removed = 0
+    try:
+        if stale:
+            # Find files that no longer exist
+            result = jedidb.db.execute("SELECT id, path FROM files").fetchall()
+            removed = 0
 
-        for file_id, file_path in result:
-            full_path = source / file_path
-            if not full_path.exists():
-                jedidb.db.delete_file(file_id)
-                removed += 1
-                print(f"Removed: {file_path}")
+            for file_id, file_path in result:
+                full_path = source / file_path
+                if not full_path.exists():
+                    jedidb.db.delete_file(file_id)
+                    removed += 1
+                    print(f"Removed: {file_path}")
 
-        # Re-export to parquet if we removed anything
-        if removed > 0:
-            jedidb.db.export_to_parquet(jedidb.db_dir)
-
+            # Re-export to parquet if we removed anything
+            if removed > 0:
+                jedidb.db.export_to_parquet(jedidb.db_dir)
+    finally:
         jedidb.close()
 
+    if stale:
         if removed > 0:
             print_success(f"Removed {removed} stale file entries")
         else:

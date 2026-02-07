@@ -64,57 +64,57 @@ def export_cmd(
         print_error(f"Failed to open database: {e}")
         raise typer.Exit(1)
 
-    # Build query based on table
-    params = None
-    if table == "definitions":
-        sql = """
-            SELECT d.id, d.name, d.full_name, d.type, d.line, d.col as column,
-                   d.signature, d.docstring, d.is_public, f.path as file
-            FROM definitions d
-            JOIN files f ON d.file_id = f.id
-        """
-        if type_filter:
-            sql += " WHERE d.type = ?"
-            params = (type_filter,)
-        sql += " ORDER BY f.path, d.line"
-        columns = ["id", "name", "full_name", "type", "line", "column", "signature", "docstring", "is_public", "file"]
-
-    elif table == "files":
-        sql = "SELECT id, path, hash, size, modified_at, indexed_at FROM files ORDER BY path"
-        columns = ["id", "path", "hash", "size", "modified_at", "indexed_at"]
-
-    elif table == "refs":
-        sql = """
-            SELECT r.id, r.name, r.line, r.col as column, r.context, f.path as file
-            FROM refs r
-            JOIN files f ON r.file_id = f.id
-            ORDER BY f.path, r.line
-        """
-        columns = ["id", "name", "line", "column", "context", "file"]
-
-    elif table == "imports":
-        sql = """
-            SELECT i.id, i.module, i.name, i.alias, i.line, f.path as file
-            FROM imports i
-            JOIN files f ON i.file_id = f.id
-            ORDER BY f.path, i.line
-        """
-        columns = ["id", "module", "name", "alias", "line", "file"]
-
-    else:
-        jedidb.close()
-        print_error(f"Unknown table: {table}")
-        raise typer.Exit(1)
-
     try:
+        # Build query based on table
+        params = None
+        if table == "definitions":
+            sql = """
+                SELECT d.id, d.name, d.full_name, d.type, d.line, d.col as column,
+                       d.signature, d.docstring, d.is_public, f.path as file
+                FROM definitions d
+                JOIN files f ON d.file_id = f.id
+            """
+            if type_filter:
+                sql += " WHERE d.type = ?"
+                params = (type_filter,)
+            sql += " ORDER BY f.path, d.line"
+            columns = ["id", "name", "full_name", "type", "line", "column", "signature", "docstring", "is_public", "file"]
+
+        elif table == "files":
+            sql = "SELECT id, path, hash, size, modified_at, indexed_at FROM files ORDER BY path"
+            columns = ["id", "path", "hash", "size", "modified_at", "indexed_at"]
+
+        elif table == "refs":
+            sql = """
+                SELECT r.id, r.name, r.line, r.col as column, r.context, f.path as file
+                FROM refs r
+                JOIN files f ON r.file_id = f.id
+                ORDER BY f.path, r.line
+            """
+            columns = ["id", "name", "line", "column", "context", "file"]
+
+        elif table == "imports":
+            sql = """
+                SELECT i.id, i.module, i.name, i.alias, i.line, f.path as file
+                FROM imports i
+                JOIN files f ON i.file_id = f.id
+                ORDER BY f.path, i.line
+            """
+            columns = ["id", "module", "name", "alias", "line", "file"]
+
+        else:
+            print_error(f"Unknown table: {table}")
+            raise typer.Exit(1)
+
         result = jedidb.db.execute(sql, params)
         rows = result.fetchall()
+    except typer.Exit:
+        raise
     except Exception as e:
-        jedidb.close()
         print_error(f"Query error: {e}")
         raise typer.Exit(1)
-
-    jedidb.close()
+    finally:
+        jedidb.close()
 
     # Convert to list of dicts
     data = [dict(zip(columns, row)) for row in rows]

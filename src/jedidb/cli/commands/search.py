@@ -97,14 +97,15 @@ def search_cmd(
         print_error(f"Failed to open database: {e}")
         raise typer.Exit(1)
 
-    results = jedidb.search_engine.search(
-        query,
-        type=type.value if type else None,
-        limit=limit,
-        include_private=include_private,
-    )
-
-    jedidb.close()
+    try:
+        results = jedidb.search_engine.search(
+            query,
+            type=type.value if type else None,
+            limit=limit,
+            include_private=include_private,
+        )
+    finally:
+        jedidb.close()
 
     if not results:
         print_info("No results found")

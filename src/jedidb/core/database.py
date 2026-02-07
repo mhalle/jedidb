@@ -155,6 +155,7 @@ class Database:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: duckdb.DuckDBPyConnection | None = None
         self._fts_initialized = False
+        self._fts_available = True  # assume available until proven otherwise
 
     @property
     def conn(self) -> duckdb.DuckDBPyConnection:
@@ -168,8 +169,12 @@ class Database:
         """Initialize database schema."""
         self.conn.execute(SCHEMA_SQL)
 
-    def _init_fts(self):
-        """Initialize full-text search extension."""
+    def init_fts(self):
+        """Initialize full-text search extension.
+
+        Sets _fts_available to False if the extension cannot be loaded,
+        allowing callers to skip FTS and use LIKE-based fallback.
+        """
         if self._fts_initialized:
             return
 
@@ -177,13 +182,18 @@ class Database:
             self.conn.execute(FTS_SETUP_SQL)
             self._fts_initialized = True
         except duckdb.Error as e:
-            # FTS extension might already be loaded, or not available
-            logger.debug("FTS initialization: %s", e)
+            logger.debug("FTS extension not available: %s", e)
             self._fts_initialized = True
+            self._fts_available = False
 
     def create_fts_index(self):
-        """Create or recreate the FTS index on definitions.search_text."""
-        self._init_fts()
+        """Create or recreate the FTS index on definitions.search_text.
+
+        No-op if the FTS extension is not available.
+        """
+        self.init_fts()
+        if not self._fts_available:
+            return
 
         # Drop existing FTS index if it exists
         try:
@@ -197,7 +207,7 @@ class Database:
             "PRAGMA create_fts_index('definitions', 'id', 'search_text', stemmer='none', stopwords='none', overwrite=1)"
         )
 
-    def execute(self, sql: str, params: tuple | list | None = None) -> duckdb.DuckDBPyRelation:
+    def execute(self, sql: str, params: tuple | list | None = None) -> duckdb.DuckDBPyConnection:
         """Execute a SQL query.
 
         Args:
@@ -349,14 +359,7 @@ class Database:
             (file_id,)
         ).fetchall()
 
-        return [
-            Definition(
-                id=r[0], file_id=r[1], name=r[2], full_name=r[3], type=r[4],
-                line=r[5], column=r[6], end_line=r[7], end_column=r[8],
-                signature=r[9], docstring=r[10], parent_id=r[11], is_public=r[12]
-            )
-            for r in results
-        ]
+        return [Definition.from_row(r) for r in results]
 
     # Reference operations
 
@@ -607,8 +610,9 @@ class Database:
 
         tables = ["files", "definitions", "refs", "imports", "decorators", "class_bases", "calls"]
         for table in tables:
+            parquet_path = str(output_dir / f"{table}.parquet").replace("'", "''")
             self.execute(f"""
-                COPY {table} TO '{output_dir / f"{table}.parquet"}'
+                COPY {table} TO '{parquet_path}'
                 (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL {compression_level})
             """)
 
@@ -632,9 +636,11 @@ class Database:
         db.db_path = parquet_dir / "jedidb.duckdb"  # For reference only
         db._conn = duckdb.connect(":memory:")
         db._fts_initialized = False
+        db._fts_available = True
 
         # Set the parquet directory variable
-        db._conn.execute(f"SET variable parquet_dir = '{parquet_dir}'")
+        safe_dir = str(parquet_dir).replace("'", "''")
+        db._conn.execute(f"SET variable parquet_dir = '{safe_dir}'")
 
         # Load init.sql from package
         init_sql = files("jedidb").joinpath("init.sql").read_text()
@@ -650,7 +656,8 @@ class Database:
         # Handle class_bases table (may not exist in older indexes)
         class_bases_parquet = parquet_dir / "class_bases.parquet"
         if class_bases_parquet.exists():
-            db._conn.execute(f"CREATE OR REPLACE TABLE class_bases AS SELECT * FROM read_parquet('{class_bases_parquet}')")
+            safe_path = str(class_bases_parquet).replace("'", "''")
+            db._conn.execute(f"CREATE OR REPLACE TABLE class_bases AS SELECT * FROM read_parquet('{safe_path}')")
         else:
             # Create empty table for older indexes
             db._conn.execute("""
@@ -673,5 +680,17 @@ class Database:
         # Create index for call ordering queries (after ALTER statements to avoid dependency issues)
         db._conn.execute("CREATE INDEX IF NOT EXISTS idx_calls_caller_order ON calls(caller_full_name, call_order)")
 
-        db._fts_initialized = True
+        # Attempt to load FTS extension and create index; fall back to LIKE search if unavailable
+        try:
+            db._conn.execute("INSTALL fts")
+            db._conn.execute("LOAD fts")
+            db._conn.execute(
+                "PRAGMA create_fts_index('definitions', 'id', 'search_text', stemmer='none', stopwords='none')"
+            )
+            db._fts_initialized = True
+        except duckdb.Error as e:
+            logger.debug("FTS extension not available, LIKE search will be used: %s", e)
+            db._fts_initialized = True
+            db._fts_available = False
+
         return db

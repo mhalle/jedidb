@@ -57,18 +57,18 @@ def show_cmd(
         print_error(f"Failed to open database: {e}")
         raise typer.Exit(1)
 
-    definition = jedidb.search_engine.get_definition(name)
+    try:
+        definition = jedidb.search_engine.get_definition(name)
 
-    if not definition:
+        if not definition:
+            print_error(f"Definition not found: {name}")
+            raise typer.Exit(1)
+
+        references = []
+        if refs:
+            references = jedidb.search_engine.find_references(definition.full_name or definition.name)
+    finally:
         jedidb.close()
-        print_error(f"Definition not found: {name}")
-        raise typer.Exit(1)
-
-    references = []
-    if refs:
-        references = jedidb.search_engine.find_references(definition.name)
-
-    jedidb.close()
 
     if output_format == "json":
         data = {
