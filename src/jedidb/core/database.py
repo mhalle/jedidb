@@ -168,7 +168,7 @@ class Database:
         """Initialize database schema."""
         self.conn.execute(SCHEMA_SQL)
 
-    def _init_fts(self):
+    def init_fts(self):
         """Initialize full-text search extension."""
         if self._fts_initialized:
             return
@@ -183,7 +183,7 @@ class Database:
 
     def create_fts_index(self):
         """Create or recreate the FTS index on definitions.search_text."""
-        self._init_fts()
+        self.init_fts()
 
         # Drop existing FTS index if it exists
         try:
@@ -197,7 +197,7 @@ class Database:
             "PRAGMA create_fts_index('definitions', 'id', 'search_text', stemmer='none', stopwords='none', overwrite=1)"
         )
 
-    def execute(self, sql: str, params: tuple | list | None = None) -> duckdb.DuckDBPyRelation:
+    def execute(self, sql: str, params: tuple | list | None = None) -> duckdb.DuckDBPyConnection:
         """Execute a SQL query.
 
         Args:
@@ -349,14 +349,7 @@ class Database:
             (file_id,)
         ).fetchall()
 
-        return [
-            Definition(
-                id=r[0], file_id=r[1], name=r[2], full_name=r[3], type=r[4],
-                line=r[5], column=r[6], end_line=r[7], end_column=r[8],
-                signature=r[9], docstring=r[10], parent_id=r[11], is_public=r[12]
-            )
-            for r in results
-        ]
+        return [Definition.from_row(r) for r in results]
 
     # Reference operations
 
@@ -607,8 +600,9 @@ class Database:
 
         tables = ["files", "definitions", "refs", "imports", "decorators", "class_bases", "calls"]
         for table in tables:
+            parquet_path = str(output_dir / f"{table}.parquet").replace("'", "''")
             self.execute(f"""
-                COPY {table} TO '{output_dir / f"{table}.parquet"}'
+                COPY {table} TO '{parquet_path}'
                 (FORMAT PARQUET, COMPRESSION ZSTD, COMPRESSION_LEVEL {compression_level})
             """)
 
@@ -634,7 +628,8 @@ class Database:
         db._fts_initialized = False
 
         # Set the parquet directory variable
-        db._conn.execute(f"SET variable parquet_dir = '{parquet_dir}'")
+        safe_dir = str(parquet_dir).replace("'", "''")
+        db._conn.execute(f"SET variable parquet_dir = '{safe_dir}'")
 
         # Load init.sql from package
         init_sql = files("jedidb").joinpath("init.sql").read_text()
@@ -650,7 +645,8 @@ class Database:
         # Handle class_bases table (may not exist in older indexes)
         class_bases_parquet = parquet_dir / "class_bases.parquet"
         if class_bases_parquet.exists():
-            db._conn.execute(f"CREATE OR REPLACE TABLE class_bases AS SELECT * FROM read_parquet('{class_bases_parquet}')")
+            safe_path = str(class_bases_parquet).replace("'", "''")
+            db._conn.execute(f"CREATE OR REPLACE TABLE class_bases AS SELECT * FROM read_parquet('{safe_path}')")
         else:
             # Create empty table for older indexes
             db._conn.execute("""

@@ -83,11 +83,10 @@ def query_cmd(
         rows = result.fetchall()
         columns = [desc[0] for desc in result.description] if result.description else []
     except Exception as e:
-        jedidb.close()
         print_error(f"Query error: {e}")
         raise typer.Exit(1)
-
-    jedidb.close()
+    finally:
+        jedidb.close()
 
     if not rows:
         print("No results")

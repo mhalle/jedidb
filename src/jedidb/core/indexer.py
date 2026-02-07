@@ -158,30 +158,31 @@ class Indexer:
         # Something changed (or force) - do full re-index
         indexed_paths = set()
 
-        for i, file_path in enumerate(files_to_index):
-            if self.progress_callback:
-                self.progress_callback(str(file_path), i + 1, total_files)
+        with self.db.transaction():
+            for i, file_path in enumerate(files_to_index):
+                if self.progress_callback:
+                    self.progress_callback(str(file_path), i + 1, total_files)
 
-            rel_path = normalize_path(file_path, base_path)
-            indexed_paths.add(rel_path)
+                rel_path = normalize_path(file_path, base_path)
+                indexed_paths.add(rel_path)
 
-            try:
-                # Always force=True for individual files since we're doing full re-index
-                file_stats = self._index_file(file_path, rel_path, force=True)
-                if file_stats["indexed"]:
-                    stats["files_indexed"] += 1
-                    stats["definitions_added"] += file_stats["definitions"]
-                    stats["references_added"] += file_stats["references"]
-                    stats["imports_added"] += file_stats["imports"]
-                    stats["decorators_added"] += file_stats["decorators"]
-                    stats["class_bases_added"] += file_stats["class_bases"]
-                else:
-                    stats["files_skipped"] += 1
-            except Exception as e:
-                stats["errors"].append({"file": str(file_path), "error": str(e)})
+                try:
+                    # Always force=True for individual files since we're doing full re-index
+                    file_stats = self._index_file(file_path, rel_path, force=True)
+                    if file_stats["indexed"]:
+                        stats["files_indexed"] += 1
+                        stats["definitions_added"] += file_stats["definitions"]
+                        stats["references_added"] += file_stats["references"]
+                        stats["imports_added"] += file_stats["imports"]
+                        stats["decorators_added"] += file_stats["decorators"]
+                        stats["class_bases_added"] += file_stats["class_bases"]
+                    else:
+                        stats["files_skipped"] += 1
+                except Exception as e:
+                    stats["errors"].append({"file": str(file_path), "error": str(e)})
 
-        # Remove files no longer in scope
-        stats["files_removed"] = self._cleanup_deleted_files(indexed_paths, base_path, force=True)
+            # Remove files no longer on disk
+            stats["files_removed"] = self._cleanup_deleted_files(indexed_paths, base_path)
 
         # Post-processing: populate parent_ids and build call graph
         if stats["files_indexed"] > 0 or stats["files_removed"] > 0:
@@ -256,7 +257,12 @@ class Indexer:
             # File changed or force re-index, delete old records
             self.db.delete_file(existing_file.id)
 
-        # Create file record
+        # Analyze file first to avoid orphaned file records on failure
+        definitions, references, imports, decorators, class_bases = self.analyzer.analyze_file(
+            file_path, resolve_refs=self.resolve_refs
+        )
+
+        # Create file record (after successful analysis)
         file_record = FileRecord(
             path=rel_path,
             hash=current_hash,
@@ -264,11 +270,6 @@ class Indexer:
             modified_at=get_file_modified_time(file_path),
         )
         file_id = self.db.insert_file(file_record)
-
-        # Analyze file
-        definitions, references, imports, decorators, class_bases = self.analyzer.analyze_file(
-            file_path, resolve_refs=self.resolve_refs
-        )
 
         # Set file_id on all records
         for d in definitions:
@@ -321,20 +322,19 @@ class Indexer:
         stats["definitions"] = len(definitions)
         stats["references"] = len(references)
         stats["imports"] = len(imports)
-        stats["decorators"] = len(decorators)
-        stats["class_bases"] = len(class_bases)
+        stats["decorators"] = len([d for d in decorators if d.definition_id is not None])
+        stats["class_bases"] = len([cb for cb in class_bases if cb.class_id is not None])
 
         return stats
 
     def _cleanup_deleted_files(
-        self, indexed_paths: set[str], base_path: Path, force: bool = False
+        self, indexed_paths: set[str], base_path: Path
     ) -> int:
-        """Remove files from database that no longer exist or were excluded.
+        """Remove files from database that no longer exist on disk.
 
         Args:
             indexed_paths: Set of paths that were indexed in this run
             base_path: Base path for resolving relative paths
-            force: If True, remove all files not in indexed_paths (even if they exist)
 
         Returns:
             Number of files removed
@@ -343,13 +343,12 @@ class Indexer:
         result = self.db.execute("SELECT path FROM files").fetchall()
         db_paths = {r[0] for r in result}
 
-        # Find files that are in DB but not in indexed paths
+        # Find files that are in DB but no longer exist on disk
         removed = 0
         for db_path in db_paths:
             if db_path not in indexed_paths:
                 full_path = base_path / db_path
-                # Remove if file deleted OR if force mode (excluded files)
-                if not full_path.exists() or force:
+                if not full_path.exists():
                     self.db.delete_file_by_path(db_path)
                     removed += 1
 

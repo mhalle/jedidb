@@ -181,50 +181,68 @@ def inheritance_cmd(
         print_error(f"Failed to open database: {e}")
         raise typer.Exit(1)
 
-    # Find the class
-    definition = jedidb.search_engine.get_definition(name)
+    try:
+        # Find the class
+        definition = jedidb.search_engine.get_definition(name)
 
-    if not definition:
+        if not definition:
+            print_error(f"Definition not found: {name}")
+            raise typer.Exit(1)
+
+        if definition.type != "class":
+            print_error(f"'{name}' is a {definition.type}, not a class")
+            raise typer.Exit(1)
+
+        if tree:
+            # Show full inheritance tree
+            tree_lines = format_tree(jedidb, definition.full_name, direction="both")
+        elif children:
+            # Show what inherits from this class
+            query = """
+                SELECT d.full_name, d.name, f.path
+                FROM class_bases cb
+                JOIN definitions d ON cb.class_id = d.id
+                JOIN files f ON d.file_id = f.id
+                WHERE cb.base_full_name = ?
+                ORDER BY d.full_name
+            """
+            results = jedidb.db.execute(query, (definition.full_name,)).fetchall()
+            child_classes = [
+                {"full_name": r[0], "name": r[1], "file_path": r[2]}
+                for r in results
+            ]
+        else:
+            # Show what this class inherits from (default)
+            query = """
+                SELECT cb.base_name, cb.base_full_name, cb.base_id, cb.position
+                FROM class_bases cb
+                JOIN definitions d ON cb.class_id = d.id
+                WHERE d.full_name = ?
+                ORDER BY cb.position
+            """
+            results = jedidb.db.execute(query, (definition.full_name,)).fetchall()
+            bases = [
+                {
+                    "base_name": r[0],
+                    "base_full_name": r[1],
+                    "base_id": r[2],
+                    "position": r[3],
+                }
+                for r in results
+            ]
+    finally:
         jedidb.close()
-        print_error(f"Definition not found: {name}")
-        raise typer.Exit(1)
 
-    if definition.type != "class":
-        jedidb.close()
-        print_error(f"'{name}' is a {definition.type}, not a class")
-        raise typer.Exit(1)
-
+    # Output formatting (after close)
     if tree:
-        # Show full inheritance tree
-        lines = format_tree(jedidb, definition.full_name, direction="both")
-        jedidb.close()
-
         if output_format == OutputFormat.json:
-            # For JSON, we need structured data
-            print(format_json({"tree": lines}))
+            print(format_json({"tree": tree_lines}))
         else:
             print(f"Inheritance tree for {definition.full_name}:")
             print()
-            for line in lines:
+            for line in tree_lines:
                 print(line)
     elif children:
-        # Show what inherits from this class
-        query = """
-            SELECT d.full_name, d.name, f.path
-            FROM class_bases cb
-            JOIN definitions d ON cb.class_id = d.id
-            JOIN files f ON d.file_id = f.id
-            WHERE cb.base_full_name = ?
-            ORDER BY d.full_name
-        """
-        results = jedidb.db.execute(query, (definition.full_name,)).fetchall()
-        jedidb.close()
-
-        child_classes = [
-            {"full_name": r[0], "name": r[1], "file_path": r[2]}
-            for r in results
-        ]
-
         if not child_classes:
             print_info(f"No classes inherit from {definition.full_name}")
             raise typer.Exit(0)
@@ -241,27 +259,6 @@ def inheritance_cmd(
             print(format_children_table(child_classes))
             print(f"\n{len(child_classes)} subclass(es)")
     else:
-        # Show what this class inherits from (default)
-        query = """
-            SELECT cb.base_name, cb.base_full_name, cb.base_id, cb.position
-            FROM class_bases cb
-            JOIN definitions d ON cb.class_id = d.id
-            WHERE d.full_name = ?
-            ORDER BY cb.position
-        """
-        results = jedidb.db.execute(query, (definition.full_name,)).fetchall()
-        jedidb.close()
-
-        bases = [
-            {
-                "base_name": r[0],
-                "base_full_name": r[1],
-                "base_id": r[2],
-                "position": r[3],
-            }
-            for r in results
-        ]
-
         if not bases:
             print_info(f"No base classes found for {definition.full_name}")
             raise typer.Exit(0)
